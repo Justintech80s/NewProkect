@@ -31,7 +31,7 @@ from .services.self_repair import SelfRepairEngine
 from .services.stem_arranger import StemArranger
 from .services.stems import StemSeparator
 
-app = FastAPI(title="Just Maker AI Backend", version="1.2.0")
+app = FastAPI(title="Just Maker AI Backend", version="1.3.0")
 
 allowed_origins = [
     origin.strip()
@@ -284,7 +284,7 @@ def process_job(job_id: str, req: GenerateRequest):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "1.2.0",
+        "version": "1.3.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -299,6 +299,7 @@ def root():
             "arrangement",
             "stem-arrangement",
             "conditioning-compiler",
+            "capability-aware-worker-selection",
             "generation",
             "repetition-check",
             "section-repair",
@@ -316,9 +317,14 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "1.2.0",
+        "version": "1.3.0",
         "generator": router.provider,
     }
+
+
+@app.get("/v1/generation-workers")
+def generation_workers():
+    return router.status()
 
 
 @app.get("/v1/music-brain/status")
