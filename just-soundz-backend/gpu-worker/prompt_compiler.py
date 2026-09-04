@@ -18,6 +18,7 @@ class ConditioningPromptCompiler:
         instruments = conditioning.get("instrumentation") or {}
         rhythm = conditioning.get("rhythm") or {}
         harmony = musical.get("harmony") or {}
+        advanced = conditioning.get("advanced_controls") or {}
 
         parts: List[str] = []
 
@@ -68,6 +69,29 @@ class ConditioningPromptCompiler:
                 for s in arrangement[:8]
             )
             parts.append("arrangement: " + summary)
+
+        sections = advanced.get("sections") or []
+        if sections:
+            section_energy = ", ".join(
+                f"{s.get('section','section')} energy {float(s.get('energy',0.5)):.2f}"
+                for s in sections[:8]
+            )
+            parts.append("section energy map: " + section_energy)
+
+        chord_controls = advanced.get("chords") or []
+        if chord_controls:
+            chord_summary = ", ".join(
+                f"{c.get('chord')} at {float(c.get('start_seconds',0)):.1f}s"
+                for c in chord_controls[:12]
+            )
+            parts.append("timed chord controls: " + chord_summary)
+
+        rhythm_controls = advanced.get("rhythm") or {}
+        if rhythm_controls:
+            parts.append(
+                "locked 16-step rhythmic control with kick, snare, hats, percussion, "
+                "microtiming and humanized velocity"
+            )
 
         negative = text.get("negative") or []
         if negative:
