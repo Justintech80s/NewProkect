@@ -38,10 +38,23 @@ class StemMixer:
             gain = 10 ** (gain_db / 20.0)
 
             stereo = self._to_stereo(audio)
+            eq = bus.get("eq") or {}
+            high_pass_hz = float(eq.get("high_pass_hz", 0.0))
+            if high_pass_hz > 0:
+                stereo = self._high_pass(stereo, sr, high_pass_hz)
+
+            if float(eq.get("mud_cut_db", 0.0)) < 0:
+                stereo = self._tilt_reduce_low_mids(stereo, amount=0.08)
+            if float(eq.get("harshness_cut_db", 0.0)) < 0:
+                stereo = self._smooth_highs(stereo, amount=0.12)
+
             left_gain = gain * min(1.0, 1.0 - max(0.0, pan))
             right_gain = gain * min(1.0, 1.0 + min(0.0, pan))
             stereo[:, 0] *= left_gain
             stereo[:, 1] *= right_gain
+
+            if (bus.get("limiter") or {}).get("enabled"):
+                stereo = np.tanh(stereo * 1.15) / np.tanh(1.15)
 
             mix[:len(stereo)] += stereo
 
@@ -87,6 +100,30 @@ class StemMixer:
             return audio.copy()
         mono = audio[:, 0] if audio.ndim == 2 else audio
         return np.stack([mono, mono], axis=1).astype(np.float32)
+
+    def _high_pass(self, audio: np.ndarray, sr: int, cutoff_hz: float) -> np.ndarray:
+        if len(audio) < 2:
+            return audio
+        rc = 1.0 / (2.0 * np.pi * max(10.0, cutoff_hz))
+        dt = 1.0 / sr
+        alpha = rc / (rc + dt)
+        out = np.empty_like(audio)
+        out[0] = audio[0]
+        for i in range(1, len(audio)):
+            out[i] = alpha * (out[i - 1] + audio[i] - audio[i - 1])
+        return out
+
+    def _tilt_reduce_low_mids(self, audio: np.ndarray, amount: float) -> np.ndarray:
+        delayed = np.vstack([audio[:1], audio[:-1]])
+        low = 0.5 * audio + 0.5 * delayed
+        return audio - low * float(amount)
+
+    def _smooth_highs(self, audio: np.ndarray, amount: float) -> np.ndarray:
+        if len(audio) < 2:
+            return audio
+        smooth = audio.copy()
+        smooth[1:] = 0.5 * audio[1:] + 0.5 * audio[:-1]
+        return audio * (1.0 - amount) + smooth * amount
 
     def _write(self, path: Path, audio: np.ndarray, sr: int):
         pcm = np.clip(audio * 32767.0, -32768, 32767).astype(np.int16)

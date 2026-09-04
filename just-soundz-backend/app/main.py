@@ -23,6 +23,8 @@ from .services.job_recovery import JobRecoveryPlanner
 from .services.harmony_planner import HarmonyPlanner
 from .services.instrumentation_planner import InstrumentationPlanner
 from .services.mastering import MasteringEngine
+from .services.mastering_critic import MasteringCritic
+from .services.mix_intelligence import MixIntelligence
 from .services.producer import ProducerPlanner
 from .services.producer_dna import ProducerDNAEngine
 from .services.production_critic import ProductionCritic
@@ -40,7 +42,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="2.0.0")
+app = FastAPI(title="Just Maker AI Backend", version="2.1.0")
 
 allowed_origins = [
     origin.strip()
@@ -83,6 +85,8 @@ repetition_detector = RepetitionDetector()
 repair_engine = SectionRepairEngine()
 self_repair = SelfRepairEngine()
 mastering = MasteringEngine()
+mastering_critic = MasteringCritic()
+mix_intelligence = MixIntelligence()
 quality = QualityJudge()
 stems = StemSeparator()
 analyzer = AudioAnalyzer()
@@ -149,13 +153,20 @@ def generate_professional_stem_mix(plan: Dict[str, Any]) -> Dict[str, Any]:
                 "routing": result.get("routing"),
             })
 
+    raw_analysis = mix_intelligence.analyze_stems(generated)
+    corrected_arrangement = mix_intelligence.apply_bus_corrections(
+        plan.get("stem_arrangement") or {},
+        raw_analysis,
+    )
     mixed = stem_mixer.mix(
         generated,
-        plan.get("stem_arrangement") or {},
+        corrected_arrangement,
     )
     return {
         "requested": len(professional_stems.build_requests(plan)),
         "generated": generated,
+        "mix_analysis": raw_analysis,
+        "corrected_stem_arrangement": corrected_arrangement,
         "mix": mixed,
     }
 
@@ -236,8 +247,21 @@ def run_generation(req: GenerateRequest):
             )
 
     mastering_result = {"mastered": False, "reason": "remote_audio"}
+    mastering_review = {"pass": False, "issues": ["not_mastered"], "score": 0.0}
+    mastering_corrections = 0
     if generation.get("audio_path"):
         mastering_result = mastering.process(generation["audio_path"])
+        mastering_review = mastering_critic.evaluate(mastering_result)
+
+        if not mastering_review.get("pass"):
+            mastering_corrections += 1
+            target_peak = mastering_critic.corrective_target_peak(mastering_review)
+            mastering_result = mastering.process(
+                generation["audio_path"],
+                target_peak_db=target_peak,
+            )
+            mastering_review = mastering_critic.evaluate(mastering_result)
+
         if mastering_result.get("mastered"):
             generation["unmastered_audio_path"] = generation["audio_path"]
             generation["audio_path"] = mastering_result["audio_path"]
@@ -293,6 +317,16 @@ def run_generation(req: GenerateRequest):
                 section_count=max(2, min(8, len(plan.get("arrangement", [])))),
             )
             mastering_result = mastering.process(generation["audio_path"])
+            mastering_review = mastering_critic.evaluate(mastering_result)
+            if not mastering_review.get("pass"):
+                mastering_corrections += 1
+                target_peak = mastering_critic.corrective_target_peak(mastering_review)
+                mastering_result = mastering.process(
+                    generation["audio_path"],
+                    target_peak_db=target_peak,
+                )
+                mastering_review = mastering_critic.evaluate(mastering_result)
+
             if mastering_result.get("mastered"):
                 generation["unmastered_audio_path"] = generation["audio_path"]
                 generation["audio_path"] = mastering_result["audio_path"]
@@ -344,7 +378,12 @@ def run_generation(req: GenerateRequest):
         "quality": score,
         "stems": stem_result,
         "repetition": repetition,
-        "mastering": mastering_result,
+        "mastering": {
+            **mastering_result,
+            "critic": mastering_review,
+            "corrective_passes": mastering_corrections,
+            "mix_analysis": professional_stem_result.get("mix_analysis", {}),
+        },
         "production_critic": {
             **critique,
             "repair_instructions": production_critic.repair_instructions(critique),
@@ -455,7 +494,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -473,6 +512,9 @@ def root():
             "conditioning-compiler",
             "native-stem-generation",
             "stem-mixdown",
+            "mix-intelligence",
+            "adaptive-mastering",
+            "mastering-critic",
             "capability-aware-worker-selection",
             "gpu-model-worker",
             "generation",
@@ -502,7 +544,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "generator": router.provider,
     }
 
