@@ -12,8 +12,10 @@ from .music_brain.ingestion import MusicIngestionPipeline
 from .music_brain.rights import SampleRightsEngine
 from .music_brain.search import MusicBrainSearch
 from .services.analysis import AudioAnalyzer
+from .services.artifacts import ArtifactManifest, ArtifactStore
 from .services.arranger import ArrangementEngine
 from .services.conditioning import ConditioningCompiler
+from .services.durable_jobs import DurableGenerationJobStore
 from .services.harmony_planner import HarmonyPlanner
 from .services.instrumentation_planner import InstrumentationPlanner
 from .services.mastering import MasteringEngine
@@ -31,7 +33,7 @@ from .services.self_repair import SelfRepairEngine
 from .services.stem_arranger import StemArranger
 from .services.stems import StemSeparator
 
-app = FastAPI(title="Just Maker AI Backend", version="1.3.0")
+app = FastAPI(title="Just Maker AI Backend", version="1.4.0")
 
 allowed_origins = [
     origin.strip()
@@ -50,6 +52,9 @@ app.add_middleware(
 )
 
 planner = ProducerPlanner()
+artifact_manifest = ArtifactManifest()
+artifact_store = ArtifactStore()
+durable_jobs = DurableGenerationJobStore()
 conditioning_compiler = ConditioningCompiler()
 production_critic = ProductionCritic()
 stem_arranger = StemArranger()
@@ -273,18 +278,55 @@ def run_generation(req: GenerateRequest):
 
 def process_job(job_id: str, req: GenerateRequest):
     jobs.update(job_id, status="running")
+    durable_jobs.update(job_id, status="running", stage="planning", progress=0.05)
+
     try:
+        durable_jobs.update(job_id, stage="generating", progress=0.20)
         result = run_generation(req)
+
+        artifacts = []
+        generation = result.get("generation") or {}
+        master_path = generation.get("audio_path")
+        if master_path:
+            durable_jobs.update(job_id, stage="persisting-artifacts", progress=0.90)
+            manifest = artifact_manifest.from_path(
+                master_path,
+                artifact_type="master",
+                job_id=job_id,
+                metadata={
+                    "provider": generation.get("provider"),
+                    "bpm": (result.get("plan") or {}).get("bpm"),
+                    "key": (result.get("plan") or {}).get("key"),
+                },
+            )
+            persisted = artifact_store.persist(manifest)
+            durable_jobs.save_artifact(persisted)
+            artifacts.append(persisted)
+
+        result["artifacts"] = artifacts
         jobs.update(job_id, status="complete", result=result)
+        durable_jobs.update(
+            job_id,
+            status="complete",
+            stage="complete",
+            progress=1.0,
+            result=result,
+        )
     except Exception as exc:
         jobs.update(job_id, status="failed", error=str(exc))
+        durable_jobs.update(
+            job_id,
+            status="failed",
+            stage="failed",
+            error=str(exc),
+        )
 
 
 @app.get("/")
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "1.3.0",
+        "version": "1.4.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -308,6 +350,8 @@ def root():
             "production-critic",
             "closed-loop-self-repair",
             "stems",
+            "durable-job-state",
+            "artifact-persistence",
         ],
     }
 
@@ -317,7 +361,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "1.3.0",
+        "version": "1.4.0",
         "generator": router.provider,
     }
 
@@ -423,19 +467,39 @@ def generate(req: GenerateRequest):
 
 @app.post("/v1/jobs")
 def create_job(req: GenerateRequest, background_tasks: BackgroundTasks):
-    job = jobs.create()
-    background_tasks.add_task(process_job, job.id, req)
-    return {"job_id": job.id, "status": job.status}
+    durable = durable_jobs.create(req.model_dump())
+
+    if durable_jobs.configured:
+        job_id = durable["job_id"]
+        jobs.create_with_id(job_id)
+    else:
+        job = jobs.create()
+        job_id = job.id
+
+    background_tasks.add_task(process_job, job_id, req)
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "durable": durable_jobs.configured,
+    }
 
 
 @app.get("/v1/jobs/{job_id}")
 def get_job(job_id: str):
+    durable = durable_jobs.get(job_id)
+    if durable:
+        durable["artifacts"] = durable_jobs.artifacts(job_id)
+        return durable
+
     job = jobs.get(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return {
         "job_id": job.id,
         "status": job.status,
+        "stage": job.status,
+        "progress": 1.0 if job.status == "complete" else 0.0,
         "result": job.result,
         "error": job.error,
+        "artifacts": [],
     }
