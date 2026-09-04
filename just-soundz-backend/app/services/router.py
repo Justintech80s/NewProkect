@@ -1,20 +1,22 @@
 import os
 from typing import Dict, Any
 
-class GenerationRouter:
-    """
-    Provider-agnostic generation layer.
+from .providers import (
+    MusicGenJascoProvider,
+    RemoteWorkerProvider,
+    StableAudioProvider,
+)
 
-    Configure commercial/approved providers through environment variables.
-    Optional local adapters can be added for JASCO/MusicGen-compatible or
-    Stable Audio-compatible workers without changing the frontend API.
-    """
+
+class GenerationRouter:
+    """Provider-agnostic generation layer."""
 
     def __init__(self):
         self.provider = os.getenv("JUST_SOUNDZ_GENERATOR", "disabled")
 
     def generate(self, plan: Dict[str, Any], variation: int = 0):
-        if self.provider == "disabled":
+        provider = self._build_provider()
+        if provider is None:
             return {
                 "provider": "disabled",
                 "audio_path": None,
@@ -24,28 +26,26 @@ class GenerationRouter:
                 ),
             }
 
-        if self.provider == "http-worker":
-            return self._http_worker(plan, variation)
+        result = provider.generate(plan, variation)
+        if not result.get("audio_path") and not result.get("audio_url"):
+            result["message"] = "The configured worker returned no audio output."
+        return result
 
-        return {
-            "provider": self.provider,
-            "audio_path": None,
-            "message": f"Unknown JUST_SOUNDZ_GENERATOR provider: {self.provider}",
-        }
+    def _build_provider(self):
+        if self.provider == "disabled":
+            return None
 
-    def _http_worker(self, plan, variation):
-        # Deliberately leaves model choice outside the web app so GPU/music models
-        # can be swapped without changing the frontend.
-        import httpx
-        url = os.environ["JUST_SOUNDZ_WORKER_URL"].rstrip("/") + "/generate"
+        url = os.getenv("JUST_SOUNDZ_WORKER_URL")
+        if not url:
+            return None
+
         token = os.getenv("JUST_SOUNDZ_WORKER_TOKEN")
-        headers = {"Authorization": f"Bearer {token}"} if token else {}
-        payload = {"plan": plan, "variation": variation}
-        r = httpx.post(url, json=payload, headers=headers, timeout=600)
-        r.raise_for_status()
-        data = r.json()
-        return {
-            "provider": "http-worker",
-            "audio_path": data.get("audio_path"),
-            "metadata": data.get("metadata", {}),
-        }
+
+        if self.provider == "http-worker":
+            return RemoteWorkerProvider(url, token)
+        if self.provider == "musicgen-jasco-worker":
+            return MusicGenJascoProvider(url, token)
+        if self.provider == "stable-audio-worker":
+            return StableAudioProvider(url, token)
+
+        return None
