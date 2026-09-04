@@ -26,6 +26,12 @@ class ConditioningPromptCompiler:
         if base_prompt:
             parts.append(str(base_prompt))
 
+        stem_target = plan.get("stem_target")
+        if stem_target:
+            parts.append(
+                f"generate isolated {stem_target} stem only, suitable for professional multitrack mixing"
+            )
+
         bpm = musical.get("bpm") or plan.get("bpm")
         key = musical.get("key") or plan.get("key")
         if bpm:
@@ -98,6 +104,8 @@ class ConditioningPromptCompiler:
             parts.append("avoid: " + ", ".join(map(str, negative[:12])))
 
         parts.append(f"variation pass {variation}")
+        if stem_target:
+            parts.append(f"exclude unrelated instruments from the {stem_target} stem")
         parts.append("original instrumental composition, no direct melodic copying")
 
         return ". ".join(x for x in parts if x)
