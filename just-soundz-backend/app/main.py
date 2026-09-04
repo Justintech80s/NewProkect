@@ -35,8 +35,9 @@ from .services.section_repair import SectionRepairEngine
 from .services.self_repair import SelfRepairEngine
 from .services.stem_arranger import StemArranger
 from .services.stems import StemSeparator
+from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="1.6.0")
+app = FastAPI(title="Just Maker AI Backend", version="1.7.0")
 
 allowed_origins = [
     origin.strip()
@@ -84,10 +85,11 @@ music_ingestion = MusicIngestionPipeline()
 sample_rights = SampleRightsEngine()
 dataset_ingestor = DatasetBatchIngestor()
 music_context_builder = MusicBrainContextBuilder(music_brain_search)
+usage_quota = UsageQuotaService()
 
 
 class GenerateRequest(BaseModel):
-    prompt: str = Field(min_length=3)
+    prompt: str = Field(min_length=3, max_length=1200)
     duration_seconds: int = Field(default=120, ge=10, le=600)
     bpm: Optional[int] = Field(default=None, ge=40, le=240)
     key: Optional[str] = None
@@ -284,6 +286,13 @@ def run_generation(req: GenerateRequest):
 
 def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
     jobs.update(job_id, status="running")
+    if user_id:
+        usage_quota.record_event(
+            user_id,
+            "generation_started",
+            job_id=job_id,
+            metadata={"duration_seconds": req.duration_seconds},
+        )
     durable_jobs.update(job_id, status="running", stage="planning", progress=0.05)
 
     try:
@@ -314,6 +323,16 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 
         result["artifacts"] = artifacts
         jobs.update(job_id, status="complete", result=result)
+        if user_id:
+            usage_quota.record_event(
+                user_id,
+                "generation_completed",
+                job_id=job_id,
+                metadata={
+                    "duration_seconds": req.duration_seconds,
+                    "provider": (result.get("generation") or {}).get("provider"),
+                },
+            )
         durable_jobs.update(
             job_id,
             status="complete",
@@ -323,6 +342,13 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
         )
     except Exception as exc:
         jobs.update(job_id, status="failed", error=str(exc))
+        if user_id:
+            usage_quota.record_event(
+                user_id,
+                "generation_failed",
+                job_id=job_id,
+                metadata={"error_type": exc.__class__.__name__},
+            )
         durable_jobs.update(
             job_id,
             status="failed",
@@ -335,7 +361,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "1.6.0",
+        "version": "1.7.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -365,6 +391,10 @@ def root():
             "job-recovery",
             "authenticated-user-ownership",
             "per-user-job-isolation",
+            "usage-tracking",
+            "quota-enforcement",
+            "concurrency-limits",
+            "abuse-protection",
         ],
     }
 
@@ -374,7 +404,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "1.6.0",
+        "version": "1.7.0",
         "generator": router.provider,
     }
 
@@ -392,6 +422,13 @@ def require_user(authorization: Optional[str]) -> Dict[str, Any]:
 @app.get("/v1/me")
 def current_user(authorization: Optional[str] = Header(default=None)):
     return require_user(authorization)
+
+
+
+@app.get("/v1/usage")
+def usage_status(authorization: Optional[str] = Header(default=None)):
+    user = require_user(authorization)
+    return usage_quota.status(user["id"])
 
 
 @app.get("/v1/generation-workers")
@@ -500,6 +537,19 @@ def create_job(
     authorization: Optional[str] = Header(default=None),
 ):
     user = require_user(authorization)
+    quota = usage_quota.check(user["id"], req.duration_seconds)
+    if not quota.get("allowed", False):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "message": "Generation quota exceeded",
+                "reasons": quota.get("reasons", []),
+                "limits": quota.get("limits", {}),
+                "usage": quota.get("usage", {}),
+                "remaining": quota.get("remaining", {}),
+            },
+        )
+
     durable = durable_jobs.create(req.model_dump(), user_id=user["id"])
 
     if durable_jobs.configured:
@@ -509,6 +559,12 @@ def create_job(
         job = jobs.create(user_id=user["id"])
         job_id = job.id
 
+    usage_quota.record_event(
+        user["id"],
+        "generation_queued",
+        job_id=job_id,
+        metadata={"duration_seconds": req.duration_seconds},
+    )
     background_tasks.add_task(process_job, job_id, req, user["id"])
     return {
         "job_id": job_id,
@@ -533,6 +589,17 @@ def retry_job(
         raise HTTPException(status_code=409, detail=assessment["reason"])
 
     request_payload = dict(original.get("request") or {})
+    retry_seconds = int(request_payload.get("duration_seconds") or 120)
+    quota = usage_quota.check(user["id"], retry_seconds)
+    if not quota.get("allowed", False):
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "message": "Generation quota exceeded",
+                "reasons": quota.get("reasons", []),
+            },
+        )
+
     try:
         req = GenerateRequest(**request_payload)
     except Exception as exc:
