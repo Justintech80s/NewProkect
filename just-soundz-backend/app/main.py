@@ -11,6 +11,7 @@ from .music_brain.context import MusicBrainContextBuilder
 from .music_brain.ingestion import MusicIngestionPipeline
 from .music_brain.rights import SampleRightsEngine
 from .music_brain.search import MusicBrainSearch
+from .services.advanced_conditioning import AdvancedConditioningPlanner
 from .services.analysis import AudioAnalyzer
 from .services.artifacts import ArtifactManifest, ArtifactStore
 from .services.artifact_delivery import SecureArtifactDelivery
@@ -37,7 +38,7 @@ from .services.stem_arranger import StemArranger
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="1.8.0")
+app = FastAPI(title="Just Maker AI Backend", version="1.9.0")
 
 allowed_origins = [
     origin.strip()
@@ -56,6 +57,7 @@ app.add_middleware(
 )
 
 planner = ProducerPlanner()
+advanced_conditioning = AdvancedConditioningPlanner()
 artifact_manifest = ArtifactManifest()
 artifact_store = ArtifactStore()
 artifact_delivery = SecureArtifactDelivery()
@@ -150,6 +152,7 @@ def run_generation(req: GenerateRequest):
     plan = sample_processor.process_plan(plan)
     plan = arranger.apply(plan)
     plan = stem_arranger.apply(plan)
+    plan = advanced_conditioning.apply(plan)
     plan = conditioning_compiler.apply(plan)
 
     generation = router.generate(plan)
@@ -218,6 +221,7 @@ def run_generation(req: GenerateRequest):
                 attempt=self_repair_attempts,
             )
             plan = stem_arranger.apply(plan)
+            plan = advanced_conditioning.apply(plan)
             plan = conditioning_compiler.apply(plan)
 
         candidate = router.generate(
@@ -361,7 +365,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "1.8.0",
+        "version": "1.9.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -375,6 +379,7 @@ def root():
             "sample-processing",
             "arrangement",
             "stem-arrangement",
+            "advanced-audio-conditioning",
             "conditioning-compiler",
             "capability-aware-worker-selection",
             "gpu-model-worker",
@@ -405,7 +410,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "1.8.0",
+        "version": "1.9.0",
         "generator": router.provider,
     }
 
