@@ -53,3 +53,20 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 The existing Just Soundz interface can remain visually unchanged. The Create action only needs to call this backend once a deployed endpoint and approved music-generation worker are configured.
+
+
+## Phase 15 closed-loop self-repair
+
+Just Maker now feeds Production Critic findings back into generation automatically.
+
+When a render misses the target, the backend can:
+
+- lock tempo conditioning more strongly,
+- reinforce the requested key/tonic,
+- increase section contrast and rhythmic mutation,
+- re-plan stem arrangement,
+- recompile the provider conditioning payload,
+- regenerate with a new variation,
+- re-run mastering, analysis, quality scoring and Production Critic evaluation.
+
+The loop stops when the render passes or the retry budget is exhausted.
