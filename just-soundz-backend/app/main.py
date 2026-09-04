@@ -13,11 +13,13 @@ from .music_brain.rights import SampleRightsEngine
 from .music_brain.search import MusicBrainSearch
 from .services.analysis import AudioAnalyzer
 from .services.arranger import ArrangementEngine
+from .services.conditioning import ConditioningCompiler
 from .services.harmony_planner import HarmonyPlanner
 from .services.instrumentation_planner import InstrumentationPlanner
 from .services.mastering import MasteringEngine
 from .services.producer import ProducerPlanner
 from .services.producer_dna import ProducerDNAEngine
+from .services.production_critic import ProductionCritic
 from .services.quality import QualityJudge
 from .services.repetition import RepetitionDetector
 from .services.rhythm_transformer import RhythmTransformer
@@ -25,9 +27,10 @@ from .services.router import GenerationRouter
 from .services.sample_brain import SampleBrain
 from .services.sample_processor import SampleProcessor
 from .services.section_repair import SectionRepairEngine
+from .services.stem_arranger import StemArranger
 from .services.stems import StemSeparator
 
-app = FastAPI(title="Just Maker AI Backend", version="1.0.0")
+app = FastAPI(title="Just Maker AI Backend", version="1.1.0")
 
 allowed_origins = [
     origin.strip()
@@ -46,6 +49,9 @@ app.add_middleware(
 )
 
 planner = ProducerPlanner()
+conditioning_compiler = ConditioningCompiler()
+production_critic = ProductionCritic()
+stem_arranger = StemArranger()
 producer_dna = ProducerDNAEngine()
 rhythm_transformer = RhythmTransformer()
 harmony_planner = HarmonyPlanner()
@@ -84,6 +90,7 @@ class GenerateResponse(BaseModel):
     stems: Dict[str, Any]
     repetition: Dict[str, Any]
     mastering: Dict[str, Any]
+    production_critic: Dict[str, Any]
 
 
 class MusicSearchRequest(BaseModel):
@@ -127,6 +134,8 @@ def run_generation(req: GenerateRequest):
     plan = sample_brain.apply(plan)
     plan = sample_processor.process_plan(plan)
     plan = arranger.apply(plan)
+    plan = stem_arranger.apply(plan)
+    plan = conditioning_compiler.apply(plan)
 
     generation = router.generate(plan)
     if not generation.get("audio_path") and not generation.get("audio_url"):
@@ -173,6 +182,12 @@ def run_generation(req: GenerateRequest):
         analysis_target or generation["audio_url"],
         analysis,
     )
+    critique = production_critic.evaluate(
+        plan,
+        analysis,
+        repetition,
+        mastering_result,
+    )
 
     quality_attempts = 1
     while score["score"] < req.quality_threshold and quality_attempts < 3:
@@ -203,6 +218,12 @@ def run_generation(req: GenerateRequest):
             analysis_target or generation["audio_url"],
             analysis,
         )
+        critique = production_critic.evaluate(
+            plan,
+            analysis,
+            repetition,
+            mastering_result,
+        )
         quality_attempts += 1
 
     stem_result = (
@@ -223,6 +244,10 @@ def run_generation(req: GenerateRequest):
         "stems": stem_result,
         "repetition": repetition,
         "mastering": mastering_result,
+        "production_critic": {
+            **critique,
+            "repair_instructions": production_critic.repair_instructions(critique),
+        },
     }
 
 
@@ -239,7 +264,7 @@ def process_job(job_id: str, req: GenerateRequest):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -252,11 +277,14 @@ def root():
             "sample-brain",
             "sample-processing",
             "arrangement",
+            "stem-arrangement",
+            "conditioning-compiler",
             "generation",
             "repetition-check",
             "section-repair",
             "mastering",
             "quality-check",
+            "production-critic",
             "stems",
         ],
     }
@@ -267,7 +295,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "generator": router.provider,
     }
 
