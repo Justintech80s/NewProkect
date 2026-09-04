@@ -24,6 +24,7 @@ class DurableGenerationJobStore:
         retry_of: str | None = None,
         retry_count: int = 0,
         max_retries: int = 3,
+        user_id: str | None = None,
     ) -> Dict[str, Any]:
         job_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
@@ -35,6 +36,7 @@ class DurableGenerationJobStore:
             "request": request_payload,
             "result": None,
             "error": None,
+            "user_id": user_id,
             "retry_of": retry_of,
             "retry_count": retry_count,
             "max_retries": max_retries,
@@ -74,7 +76,7 @@ class DurableGenerationJobStore:
             self._upsert(current)
         return current
 
-    def get(self, job_id: str) -> Optional[Dict[str, Any]]:
+    def get(self, job_id: str, user_id: str | None = None) -> Optional[Dict[str, Any]]:
         if not self.configured:
             return None
 
@@ -86,11 +88,12 @@ class DurableGenerationJobStore:
                     """
                     SELECT id::text,status,stage,progress,request_payload,
                            result_payload,error_message,created_at,updated_at,
-                           retry_count,max_retries,retry_of::text,heartbeat_at
+                           retry_count,max_retries,retry_of::text,heartbeat_at,user_id::text
                     FROM generation_jobs
                     WHERE id=%s::uuid
+                      AND (%s::uuid IS NULL OR user_id=%s::uuid)
                     """,
-                    (job_id,),
+                    (job_id, user_id, user_id),
                 )
                 row = cur.fetchone()
 
@@ -111,6 +114,7 @@ class DurableGenerationJobStore:
             "max_retries": row[10],
             "retry_of": row[11],
             "heartbeat_at": row[12].isoformat() if row[12] else None,
+            "user_id": row[13],
         }
 
     def save_artifact(self, artifact: Dict[str, Any]) -> None:
@@ -124,11 +128,11 @@ class DurableGenerationJobStore:
                 cur.execute(
                     """
                     INSERT INTO generation_artifacts (
-                        id,job_id,artifact_type,filename,content_type,size_bytes,
+                        id,job_id,user_id,artifact_type,filename,content_type,size_bytes,
                         sha256,bucket,object_path,storage_uri,metadata
                     )
                     VALUES (
-                        %s::uuid,%s::uuid,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb
+                        %s::uuid,%s::uuid,%s::uuid,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb
                     )
                     ON CONFLICT (id) DO UPDATE SET
                         bucket=EXCLUDED.bucket,
@@ -139,6 +143,7 @@ class DurableGenerationJobStore:
                     (
                         artifact["id"],
                         artifact["job_id"],
+                        artifact.get("user_id"),
                         artifact["artifact_type"],
                         artifact["filename"],
                         artifact["content_type"],
@@ -152,7 +157,7 @@ class DurableGenerationJobStore:
                 )
                 conn.commit()
 
-    def artifacts(self, job_id: str) -> list[Dict[str, Any]]:
+    def artifacts(self, job_id: str, user_id: str | None = None) -> list[Dict[str, Any]]:
         if not self.configured:
             return []
 
@@ -166,9 +171,10 @@ class DurableGenerationJobStore:
                            sha256,bucket,object_path,storage_uri,metadata,created_at
                     FROM generation_artifacts
                     WHERE job_id=%s::uuid
+                      AND (%s::uuid IS NULL OR user_id=%s::uuid)
                     ORDER BY created_at
                     """,
-                    (job_id,),
+                    (job_id, user_id, user_id),
                 )
                 rows = cur.fetchall()
 
@@ -197,16 +203,17 @@ class DurableGenerationJobStore:
                 cur.execute(
                     """
                     INSERT INTO generation_jobs (
-                        id,status,stage,progress,request_payload,result_payload,
+                        id,user_id,status,stage,progress,request_payload,result_payload,
                         error_message,retry_count,max_retries,retry_of,
                         heartbeat_at,created_at,updated_at
                     )
                     VALUES (
-                        %s::uuid,%s,%s,%s,%s::jsonb,%s::jsonb,%s,
+                        %s::uuid,%s::uuid,%s,%s,%s,%s::jsonb,%s::jsonb,%s,
                         %s,%s,%s::uuid,COALESCE(%s::timestamptz,NOW()),
                         COALESCE(%s::timestamptz,NOW()),NOW()
                     )
                     ON CONFLICT (id) DO UPDATE SET
+                        user_id=COALESCE(EXCLUDED.user_id, generation_jobs.user_id),
                         status=EXCLUDED.status,
                         stage=EXCLUDED.stage,
                         progress=EXCLUDED.progress,
@@ -221,6 +228,7 @@ class DurableGenerationJobStore:
                     """,
                     (
                         job["job_id"],
+                        job.get("user_id"),
                         job.get("status", "queued"),
                         job.get("stage", "queued"),
                         float(job.get("progress", 0.0)),
