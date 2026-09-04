@@ -42,6 +42,7 @@ class TransformersMusicGenAdapter:
         prompt: str,
         duration_seconds: int,
         variation: int,
+        controls: Dict[str, Any] | None = None,
     ) -> Tuple[np.ndarray, int, Dict[str, Any]]:
         import torch
 
@@ -52,6 +53,7 @@ class TransformersMusicGenAdapter:
             return_tensors="pt",
         ).to(self.device)
 
+        controls = controls or {}
         sample_rate = int(self.model.config.audio_encoder.sampling_rate)
         frame_rate = int(getattr(self.model.config.audio_encoder, "frame_rate", 50))
         max_new_tokens = max(64, int(duration_seconds * frame_rate))
@@ -60,11 +62,18 @@ class TransformersMusicGenAdapter:
         if self.device.startswith("cuda"):
             torch.cuda.manual_seed_all(17000 + int(variation))
 
+        production = controls.get("production") or {}
+        syncopation = float(production.get("syncopation", 0.5))
+        mix_polish = float(production.get("mix_polish", 0.8))
+        guidance_scale = max(1.5, min(5.0, 2.4 + 1.2 * mix_polish))
+        temperature = max(0.75, min(1.25, 1.08 - 0.22 * mix_polish + 0.12 * syncopation))
+
         with torch.inference_mode():
             output = self.model.generate(
                 **inputs,
                 do_sample=True,
-                guidance_scale=3.0,
+                guidance_scale=guidance_scale,
+                temperature=temperature,
                 max_new_tokens=max_new_tokens,
             )
 
@@ -73,6 +82,10 @@ class TransformersMusicGenAdapter:
             "backend": "transformers-musicgen",
             "sample_rate": sample_rate,
             "max_new_tokens": max_new_tokens,
+            "guidance_scale": round(guidance_scale, 4),
+            "temperature": round(temperature, 4),
+            "structured_controls_received": bool(controls),
+            "control_mode": "text-plus-generation-parameters",
         }
 
     def write_wav(self, path: Path, audio: np.ndarray, sample_rate: int):
