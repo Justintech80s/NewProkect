@@ -17,7 +17,14 @@ class DurableGenerationJobStore:
     def configured(self) -> bool:
         return bool(self.url)
 
-    def create(self, request_payload: Dict[str, Any]) -> Dict[str, Any]:
+    def create(
+        self,
+        request_payload: Dict[str, Any],
+        *,
+        retry_of: str | None = None,
+        retry_count: int = 0,
+        max_retries: int = 3,
+    ) -> Dict[str, Any]:
         job_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
         job = {
@@ -28,6 +35,10 @@ class DurableGenerationJobStore:
             "request": request_payload,
             "result": None,
             "error": None,
+            "retry_of": retry_of,
+            "retry_count": retry_count,
+            "max_retries": max_retries,
+            "heartbeat_at": now,
             "created_at": now,
             "updated_at": now,
         }
@@ -56,7 +67,9 @@ class DurableGenerationJobStore:
             current["result"] = result
         if error is not None:
             current["error"] = error
-        current["updated_at"] = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc).isoformat()
+        current["updated_at"] = now
+        current["heartbeat_at"] = now
         if self.configured:
             self._upsert(current)
         return current
@@ -72,7 +85,8 @@ class DurableGenerationJobStore:
                 cur.execute(
                     """
                     SELECT id::text,status,stage,progress,request_payload,
-                           result_payload,error_message,created_at,updated_at
+                           result_payload,error_message,created_at,updated_at,
+                           retry_count,max_retries,retry_of::text,heartbeat_at
                     FROM generation_jobs
                     WHERE id=%s::uuid
                     """,
@@ -93,6 +107,10 @@ class DurableGenerationJobStore:
             "error": row[6],
             "created_at": row[7].isoformat() if row[7] else None,
             "updated_at": row[8].isoformat() if row[8] else None,
+            "retry_count": row[9],
+            "max_retries": row[10],
+            "retry_of": row[11],
+            "heartbeat_at": row[12].isoformat() if row[12] else None,
         }
 
     def save_artifact(self, artifact: Dict[str, Any]) -> None:
@@ -180,10 +198,12 @@ class DurableGenerationJobStore:
                     """
                     INSERT INTO generation_jobs (
                         id,status,stage,progress,request_payload,result_payload,
-                        error_message,created_at,updated_at
+                        error_message,retry_count,max_retries,retry_of,
+                        heartbeat_at,created_at,updated_at
                     )
                     VALUES (
                         %s::uuid,%s,%s,%s,%s::jsonb,%s::jsonb,%s,
+                        %s,%s,%s::uuid,COALESCE(%s::timestamptz,NOW()),
                         COALESCE(%s::timestamptz,NOW()),NOW()
                     )
                     ON CONFLICT (id) DO UPDATE SET
@@ -193,6 +213,10 @@ class DurableGenerationJobStore:
                         request_payload=EXCLUDED.request_payload,
                         result_payload=EXCLUDED.result_payload,
                         error_message=EXCLUDED.error_message,
+                        retry_count=EXCLUDED.retry_count,
+                        max_retries=EXCLUDED.max_retries,
+                        retry_of=EXCLUDED.retry_of,
+                        heartbeat_at=EXCLUDED.heartbeat_at,
                         updated_at=NOW()
                     """,
                     (
@@ -203,6 +227,10 @@ class DurableGenerationJobStore:
                         json.dumps(job.get("request", {})),
                         json.dumps(job.get("result")),
                         job.get("error"),
+                        int(job.get("retry_count", 0)),
+                        int(job.get("max_retries", 3)),
+                        job.get("retry_of"),
+                        job.get("heartbeat_at"),
                         job.get("created_at"),
                     ),
                 )
