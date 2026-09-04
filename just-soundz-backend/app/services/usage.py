@@ -59,6 +59,8 @@ class UsageQuotaService:
                         l.daily_job_limit,
                         l.monthly_seconds_limit,
                         l.concurrent_job_limit,
+                        l.is_suspended,
+                        l.suspension_reason,
                         COALESCE((
                             SELECT count(*)
                             FROM generation_jobs j
@@ -88,14 +90,26 @@ class UsageQuotaService:
         if not row:
             return {"configured": True, "allowed": False, "reason": "usage_profile_missing"}
 
-        daily_limit, monthly_limit, concurrent_limit, daily_jobs, monthly_seconds, concurrent_jobs = row
+        (
+            daily_limit,
+            monthly_limit,
+            concurrent_limit,
+            is_suspended,
+            suspension_reason,
+            daily_jobs,
+            monthly_seconds,
+            concurrent_jobs,
+        ) = row
         return {
             "configured": True,
             "allowed": (
-                daily_jobs < daily_limit
+                not is_suspended
+                and daily_jobs < daily_limit
                 and monthly_seconds < monthly_limit
                 and concurrent_jobs < concurrent_limit
             ),
+            "suspended": bool(is_suspended),
+            "suspension_reason": suspension_reason,
             "limits": {
                 "daily_jobs": daily_limit,
                 "monthly_seconds": monthly_limit,
@@ -122,6 +136,8 @@ class UsageQuotaService:
         usage = state["usage"]
 
         reasons = []
+        if state.get("suspended"):
+            reasons.append("account_suspended")
         if usage["daily_jobs"] >= limits["daily_jobs"]:
             reasons.append("daily_job_limit_reached")
         if usage["monthly_seconds"] + requested_seconds > limits["monthly_seconds"]:
