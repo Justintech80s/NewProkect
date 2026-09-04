@@ -45,11 +45,11 @@ class GPUWorker:
             "harmony_conditioning": True,
             "instrumentation_conditioning": True,
             "arrangement_conditioning": True,
-            "stem_conditioning": False,
+            "stem_conditioning": True,
             "sample_conditioning": False,
             "negative_prompt": True,
             "max_duration_seconds": self.max_seconds,
-            "conditioning_mode": "compiled-text-plus-generation-controls",
+            "conditioning_mode": "compiled-text-plus-generation-controls-and-stem-target",
         }
 
     def generate(
