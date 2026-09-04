@@ -13,9 +13,11 @@ from .music_brain.rights import SampleRightsEngine
 from .music_brain.search import MusicBrainSearch
 from .services.analysis import AudioAnalyzer
 from .services.artifacts import ArtifactManifest, ArtifactStore
+from .services.artifact_delivery import SecureArtifactDelivery
 from .services.arranger import ArrangementEngine
 from .services.conditioning import ConditioningCompiler
 from .services.durable_jobs import DurableGenerationJobStore
+from .services.job_recovery import JobRecoveryPlanner
 from .services.harmony_planner import HarmonyPlanner
 from .services.instrumentation_planner import InstrumentationPlanner
 from .services.mastering import MasteringEngine
@@ -33,7 +35,7 @@ from .services.self_repair import SelfRepairEngine
 from .services.stem_arranger import StemArranger
 from .services.stems import StemSeparator
 
-app = FastAPI(title="Just Maker AI Backend", version="1.4.0")
+app = FastAPI(title="Just Maker AI Backend", version="1.5.0")
 
 allowed_origins = [
     origin.strip()
@@ -54,6 +56,8 @@ app.add_middleware(
 planner = ProducerPlanner()
 artifact_manifest = ArtifactManifest()
 artifact_store = ArtifactStore()
+artifact_delivery = SecureArtifactDelivery()
+job_recovery = JobRecoveryPlanner()
 durable_jobs = DurableGenerationJobStore()
 conditioning_compiler = ConditioningCompiler()
 production_critic = ProductionCritic()
@@ -326,7 +330,7 @@ def process_job(job_id: str, req: GenerateRequest):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "1.4.0",
+        "version": "1.5.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -352,6 +356,8 @@ def root():
             "stems",
             "durable-job-state",
             "artifact-persistence",
+            "secure-signed-artifact-delivery",
+            "job-recovery",
         ],
     }
 
@@ -361,7 +367,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "1.4.0",
+        "version": "1.5.0",
         "generator": router.provider,
     }
 
@@ -482,6 +488,61 @@ def create_job(req: GenerateRequest, background_tasks: BackgroundTasks):
         "status": "queued",
         "durable": durable_jobs.configured,
     }
+
+
+@app.post("/v1/jobs/{job_id}/retry")
+def retry_job(job_id: str, background_tasks: BackgroundTasks):
+    original = durable_jobs.get(job_id)
+    if not original:
+        raise HTTPException(status_code=404, detail="Durable job not found")
+
+    assessment = job_recovery.assess(original)
+    if not assessment["retryable"]:
+        raise HTTPException(status_code=409, detail=assessment["reason"])
+
+    request_payload = dict(original.get("request") or {})
+    try:
+        req = GenerateRequest(**request_payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Stored request is invalid") from exc
+
+    retry = durable_jobs.create(
+        request_payload,
+        retry_of=job_id,
+        retry_count=int(original.get("retry_count") or 0) + 1,
+        max_retries=int(original.get("max_retries") or 3),
+    )
+    jobs.create_with_id(retry["job_id"])
+    background_tasks.add_task(process_job, retry["job_id"], req)
+    return {
+        "job_id": retry["job_id"],
+        "status": "queued",
+        "retry_of": job_id,
+        "retry_count": retry["retry_count"],
+    }
+
+
+@app.post("/v1/jobs/{job_id}/artifacts/{artifact_id}/signed-url")
+def sign_job_artifact(job_id: str, artifact_id: str, expires_in: int = 900):
+    artifacts = durable_jobs.artifacts(job_id)
+    artifact = next((a for a in artifacts if a.get("id") == artifact_id), None)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artifact not found for this job")
+
+    bucket = artifact.get("bucket")
+    object_path = artifact.get("object_path")
+    if not bucket or not object_path:
+        raise HTTPException(status_code=409, detail="Artifact is not persisted in private storage")
+
+    try:
+        return artifact_delivery.sign(
+            bucket=bucket,
+            object_path=object_path,
+            expires_in=expires_in,
+            download_name=artifact.get("filename"),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Unable to create signed URL") from exc
 
 
 @app.get("/v1/jobs/{job_id}")
