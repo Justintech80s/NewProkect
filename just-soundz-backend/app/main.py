@@ -504,9 +504,9 @@ def create_job(
 
     if durable_jobs.configured:
         job_id = durable["job_id"]
-        jobs.create_with_id(job_id)
+        jobs.create_with_id(job_id, user_id=user["id"])
     else:
-        job = jobs.create()
+        job = jobs.create(user_id=user["id"])
         job_id = job.id
 
     background_tasks.add_task(process_job, job_id, req, user["id"])
@@ -545,7 +545,7 @@ def retry_job(
         max_retries=int(original.get("max_retries") or 3),
         user_id=user["id"],
     )
-    jobs.create_with_id(retry["job_id"])
+    jobs.create_with_id(retry["job_id"], user_id=user["id"])
     background_tasks.add_task(process_job, retry["job_id"], req, user["id"])
     return {
         "job_id": retry["job_id"],
@@ -595,7 +595,7 @@ def get_job(job_id: str, authorization: Optional[str] = Header(default=None)):
         return durable
 
     job = jobs.get(job_id)
-    if not job:
+    if not job or job.user_id != user["id"]:
         raise HTTPException(status_code=404, detail="Job not found")
     return {
         "job_id": job.id,
