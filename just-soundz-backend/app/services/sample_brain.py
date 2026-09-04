@@ -11,6 +11,8 @@ class SampleBrain:
         candidates = music_brain.get("eligible_samples") or []
         target_bpm = plan.get("bpm")
         target_key = plan.get("key")
+        dna = plan.get("producer_dna") or {}
+        chop_intensity = float(dna.get("sample_chop_intensity", 0.50))
 
         ranked: List[Dict[str, Any]] = []
         for candidate in candidates:
@@ -27,7 +29,12 @@ class SampleBrain:
             ranked.append({
                 **candidate,
                 "sample_score": round(score, 4),
-                "transform": self._transform(candidate, target_bpm, target_key),
+                "transform": self._transform(
+                    candidate,
+                    target_bpm,
+                    target_key,
+                    chop_intensity,
+                ),
             })
 
         ranked.sort(key=lambda row: row["sample_score"], reverse=True)
@@ -50,7 +57,13 @@ class SampleBrain:
         enriched["sample_brain"] = self.prepare(enriched)
         return enriched
 
-    def _transform(self, candidate: Dict[str, Any], target_bpm: Any, target_key: Any) -> Dict[str, Any]:
+    def _transform(
+        self,
+        candidate: Dict[str, Any],
+        target_bpm: Any,
+        target_key: Any,
+        chop_intensity: float = 0.50,
+    ) -> Dict[str, Any]:
         source_bpm = candidate.get("bpm")
         ratio = None
         if source_bpm and target_bpm:
@@ -62,5 +75,10 @@ class SampleBrain:
             "time_stretch_ratio": ratio,
             "pitch_strategy": "key-match" if candidate.get("key") and target_key else "preserve",
             "chop_strategy": "transient-aware",
-            "variation": ["slice", "reorder", "filter", "reverse-accent"],
+            "chop_intensity": round(max(0.0, min(1.0, chop_intensity)), 4),
+            "variation": (
+                ["slice", "reorder", "filter", "reverse-accent"]
+                if chop_intensity >= 0.65
+                else ["slice", "filter"]
+            ),
         }
