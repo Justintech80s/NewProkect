@@ -111,7 +111,7 @@ class MusicDatabase:
                 cur.execute(
                     """
                     INSERT INTO song_embeddings (song_id, embedding)
-                    VALUES (%s, %s::vector)
+                    VALUES (%s, %s::extensions.vector)
                     ON CONFLICT (song_id)
                     DO UPDATE SET embedding = EXCLUDED.embedding
                     """,
@@ -139,13 +139,13 @@ class MusicDatabase:
                 s.id, s.title, s.artist_name, s.album_name, s.release_year,
                 s.bpm, s.musical_key, s.genres, s.mood, s.instruments,
                 r.status, r.sampling_allowed, r.commercial_use,
-                1 - (e.embedding <=> %s::vector) AS similarity
+                1 - (e.embedding <=> %s::extensions.vector) AS similarity
             FROM song_embeddings e
             JOIN songs s ON s.id = e.song_id
             LEFT JOIN song_rights r ON r.song_id = s.id
             WHERE 1=1
             {rights_clause}
-            ORDER BY e.embedding <=> %s::vector
+            ORDER BY e.embedding <=> %s::extensions.vector
             LIMIT %s
         """
 
