@@ -1,51 +1,110 @@
-import os
-from typing import Dict, Any
+from __future__ import annotations
 
+from typing import Any, Dict, List
+
+from .model_registry import WorkerConfig
 from .procedural import ProceduralMusicProvider
 from .providers import (
     MusicGenJascoProvider,
     RemoteWorkerProvider,
     StableAudioProvider,
 )
+from .worker_selector import WorkerSelector
 
 
 class GenerationRouter:
-    """Provider-agnostic generation layer."""
+    """Capability-aware generation router with ordered failover."""
 
     def __init__(self):
-        # Generate usable audio immediately even before an external GPU provider
-        # is connected. A production AI model can replace this by environment var.
-        self.provider = os.getenv("JUST_SOUNDZ_GENERATOR", "built-in-procedural")
+        self.selector = WorkerSelector()
+
+    @property
+    def provider(self) -> str:
+        workers = self.selector.registry.workers()
+        if not workers:
+            return "unavailable"
+        return workers[0].name
 
     def generate(self, plan: Dict[str, Any], variation: int = 0):
-        provider = self._build_provider()
-        if provider is None:
-            return {
-                "provider": "unavailable",
-                "audio_path": None,
-                "message": f"Unknown or incomplete provider configuration: {self.provider}",
-            }
+        attempts: List[Dict[str, Any]] = []
 
-        result = provider.generate(plan, variation)
-        if not result.get("audio_path") and not result.get("audio_url"):
-            result["message"] = "The configured worker returned no audio output."
-        return result
+        for worker, ranking in self.selector.rank(plan):
+            if not ranking.get("duration_ok"):
+                attempts.append({
+                    "worker": worker.name,
+                    "status": "skipped",
+                    "reason": "duration_exceeds_worker_limit",
+                    **ranking,
+                })
+                continue
 
-    def _build_provider(self):
-        if self.provider == "built-in-procedural":
+            provider = self._provider_for(worker)
+            if provider is None:
+                attempts.append({
+                    "worker": worker.name,
+                    "status": "skipped",
+                    "reason": "provider_unavailable",
+                    **ranking,
+                })
+                continue
+
+            try:
+                result = provider.generate(plan, variation)
+                if result.get("audio_path") or result.get("audio_url"):
+                    result["routing"] = {
+                        "selected_worker": worker.name,
+                        "selected_kind": worker.kind,
+                        "coverage": ranking.get("coverage"),
+                        "score": ranking.get("score"),
+                        "attempts": attempts,
+                    }
+                    return result
+
+                attempts.append({
+                    "worker": worker.name,
+                    "status": "failed",
+                    "reason": "no_audio_returned",
+                    **ranking,
+                })
+            except Exception as exc:
+                attempts.append({
+                    "worker": worker.name,
+                    "status": "failed",
+                    "reason": exc.__class__.__name__,
+                    **ranking,
+                })
+
+        return {
+            "provider": "unavailable",
+            "audio_path": None,
+            "audio_url": None,
+            "message": "No configured generation worker produced audio.",
+            "routing": {
+                "selected_worker": None,
+                "attempts": attempts,
+            },
+        }
+
+    def status(self, plan: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        workers = []
+        if plan is None:
+            for worker in self.selector.registry.workers():
+                workers.append(worker.public_dict())
+        else:
+            for worker, ranking in self.selector.rank(plan):
+                workers.append({
+                    **worker.public_dict(),
+                    "ranking": ranking,
+                })
+        return {"workers": workers}
+
+    def _provider_for(self, worker: WorkerConfig):
+        if worker.kind == "built-in-procedural":
             return ProceduralMusicProvider()
-
-        url = os.getenv("JUST_SOUNDZ_WORKER_URL")
-        if not url:
-            return None
-
-        token = os.getenv("JUST_SOUNDZ_WORKER_TOKEN")
-
-        if self.provider == "http-worker":
-            return RemoteWorkerProvider(url, token)
-        if self.provider == "musicgen-jasco-worker":
-            return MusicGenJascoProvider(url, token)
-        if self.provider == "stable-audio-worker":
-            return StableAudioProvider(url, token)
-
+        if worker.kind == "http-worker":
+            return RemoteWorkerProvider(worker.url or "", worker.token)
+        if worker.kind == "musicgen-jasco-worker":
+            return MusicGenJascoProvider(worker.url or "", worker.token)
+        if worker.kind == "stable-audio-worker":
+            return StableAudioProvider(worker.url or "", worker.token)
         return None
