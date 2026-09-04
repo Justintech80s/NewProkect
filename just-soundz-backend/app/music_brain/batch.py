@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, Optional
 
 from .checkpoints import CheckpointStore
+from .database import MusicDatabase
 from .ingestion import MusicIngestionPipeline
 from .sources.musicbrainz import MusicBrainzSource
 
@@ -14,6 +15,7 @@ class DatasetBatchIngestor:
 
     def __init__(self):
         self.pipeline = MusicIngestionPipeline()
+        self.database = MusicDatabase()
         self.checkpoints = CheckpointStore()
         self.musicbrainz = MusicBrainzSource()
 
@@ -47,7 +49,7 @@ class DatasetBatchIngestor:
                     })
 
             if processed % max(checkpoint_every, 1) == 0:
-                self.checkpoints.save(job_id, {
+                checkpoint = {
                     "job_id": job_id,
                     "source": source_name,
                     "processed": processed,
@@ -56,7 +58,9 @@ class DatasetBatchIngestor:
                     "status": "running",
                     "started_at": started,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
-                })
+                }
+                self.checkpoints.save(job_id, checkpoint)
+                self.database.save_ingestion_job(checkpoint)
 
         final = {
             "job_id": job_id,
@@ -70,6 +74,7 @@ class DatasetBatchIngestor:
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }
         self.checkpoints.save(job_id, final)
+        self.database.save_ingestion_job(final)
         return final
 
     def ingest_musicbrainz_query(
@@ -82,8 +87,12 @@ class DatasetBatchIngestor:
             query=query,
             max_records=max_records,
         )
-        return self.ingest_records(
+        result = self.ingest_records(
             records,
             job_id=job_id,
             source_name="musicbrainz",
         )
+        result["query"] = query
+        self.database.save_ingestion_job(result)
+        self.checkpoints.save(result["job_id"], result)
+        return result
