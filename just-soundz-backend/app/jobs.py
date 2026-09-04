@@ -26,7 +26,10 @@ class JobStore:
         self._lock = threading.Lock()
 
     def create(self) -> Job:
-        job = Job(id=str(uuid.uuid4()))
+        return self.create_with_id(str(uuid.uuid4()))
+
+    def create_with_id(self, job_id: str) -> Job:
+        job = Job(id=job_id)
         with self._lock:
             self._jobs[job.id] = job
         return job
