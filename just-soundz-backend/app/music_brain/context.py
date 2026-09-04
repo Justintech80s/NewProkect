@@ -115,5 +115,8 @@ class MusicBrainContextBuilder:
             "instruments": row.get("instruments") or [],
             "rights_status": row.get("rights_status"),
             "sampling_allowed": bool(row.get("sampling_allowed", False)),
+            "commercial_use": bool(row.get("commercial_use", False)),
+            "source_uri": row.get("source_uri"),
+            "storage_uri": row.get("storage_uri"),
             "similarity": row.get("similarity"),
         }

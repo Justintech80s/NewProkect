@@ -285,3 +285,60 @@ class MusicDatabase:
             "completed_at": row[10].isoformat() if row[10] else None,
             "updated_at": row[11].isoformat() if row[11] else None,
         }
+
+
+    def semantic_sample_search(
+        self,
+        embedding: Iterable[float],
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        """Search only cleared sample assets linked to song embeddings."""
+        if not self.configured:
+            return []
+
+        vector = "[" + ",".join(str(float(x)) for x in embedding) + "]"
+        sql = """
+            SELECT
+                sa.id, sa.source_uri, sa.storage_uri, sa.rights_status,
+                sa.sampling_allowed, sa.commercial_use, sa.duration_seconds,
+                COALESCE(sa.bpm, s.bpm) AS bpm,
+                COALESCE(sa.musical_key, s.musical_key) AS musical_key,
+                s.id AS song_id, s.external_id, s.title, s.artist_name,
+                s.release_year, s.genres, s.mood, s.instruments,
+                1 - (e.embedding <=> %s::extensions.vector) AS similarity
+            FROM sample_assets sa
+            JOIN songs s ON s.id = sa.song_id
+            JOIN song_embeddings e ON e.song_id = s.id
+            WHERE sa.sampling_allowed = TRUE
+              AND sa.commercial_use = TRUE
+            ORDER BY e.embedding <=> %s::extensions.vector
+            LIMIT %s
+        """
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (vector, vector, limit))
+                rows = cur.fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "source_uri": row[1],
+                "storage_uri": row[2],
+                "rights_status": row[3],
+                "sampling_allowed": row[4],
+                "commercial_use": row[5],
+                "duration_seconds": row[6],
+                "bpm": row[7],
+                "key": row[8],
+                "song_id": row[9],
+                "external_id": row[10],
+                "title": row[11],
+                "artist": row[12],
+                "year": row[13],
+                "genres": row[14] or [],
+                "mood": row[15] or [],
+                "instruments": row[16] or [],
+                "similarity": float(row[17]),
+            }
+            for row in rows
+        ]

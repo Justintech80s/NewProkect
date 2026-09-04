@@ -22,11 +22,17 @@ class MusicBrainSearch:
         sample_eligible_only: bool = False,
     ) -> Dict[str, Any]:
         embedding = self.embeddings.text_embedding(query)
-        vector_results = self.db.semantic_search(
-            embedding,
-            limit=limit,
-            only_sample_eligible=sample_eligible_only,
-        )
+        if sample_eligible_only:
+            vector_results = self.db.semantic_sample_search(
+                embedding,
+                limit=limit,
+            )
+        else:
+            vector_results = self.db.semantic_search(
+                embedding,
+                limit=limit,
+                only_sample_eligible=False,
+            )
 
         graph_results = []
         if self.graph.configured and vector_results:
