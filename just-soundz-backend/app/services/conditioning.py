@@ -47,6 +47,7 @@ class ConditioningCompiler:
                 "guidance": (plan.get("music_brain") or {}).get("guidance") or {},
                 "reference_count": (plan.get("music_brain") or {}).get("reference_count", 0),
             },
+            "advanced_controls": plan.get("advanced_conditioning") or {},
         }
 
     def apply(self, plan: Dict[str, Any]) -> Dict[str, Any]:
