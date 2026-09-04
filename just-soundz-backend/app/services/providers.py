@@ -25,7 +25,11 @@ class RemoteWorkerProvider(MusicProvider):
         import httpx
 
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
-        payload = {"plan": plan, "variation": variation}
+        payload = {
+            "plan": plan,
+            "conditioning": plan.get("conditioning") or {},
+            "variation": variation,
+        }
         response = httpx.post(
             f"{self.base_url}/generate",
             json=payload,
@@ -39,6 +43,10 @@ class RemoteWorkerProvider(MusicProvider):
             "audio_path": data.get("audio_path"),
             "audio_url": data.get("audio_url"),
             "metadata": data.get("metadata", {}),
+            "worker": {
+                "url": self.base_url,
+                "status": "success",
+            },
         }
 
 
