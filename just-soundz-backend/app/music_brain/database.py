@@ -173,3 +173,114 @@ class MusicDatabase:
             }
             for row in rows
         ]
+
+
+    def set_provenance(self, song_id: int, provenance: Dict[str, Any]) -> None:
+        if not self.configured or not provenance:
+            return
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO record_provenance (
+                        song_id, source_name, source_record_id, source_url,
+                        retrieved_at, license_name, metadata_only, metadata
+                    )
+                    VALUES (%s,%s,%s,%s,COALESCE(%s::timestamptz,NOW()),%s,%s,%s::jsonb)
+                    ON CONFLICT (source_name, source_record_id)
+                    DO UPDATE SET
+                        song_id = EXCLUDED.song_id,
+                        source_url = EXCLUDED.source_url,
+                        retrieved_at = EXCLUDED.retrieved_at,
+                        license_name = EXCLUDED.license_name,
+                        metadata_only = EXCLUDED.metadata_only,
+                        metadata = EXCLUDED.metadata
+                    """,
+                    (
+                        song_id,
+                        provenance.get("source_name"),
+                        provenance.get("source_record_id"),
+                        provenance.get("source_url"),
+                        provenance.get("retrieved_at"),
+                        provenance.get("license_name"),
+                        bool(provenance.get("metadata_only", True)),
+                        json.dumps(provenance.get("metadata", {})),
+                    ),
+                )
+                conn.commit()
+
+    def save_ingestion_job(self, payload: Dict[str, Any]) -> None:
+        if not self.configured:
+            return
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO ingestion_jobs (
+                        id, source_name, query, status, processed_count,
+                        stored_count, failed_count, checkpoint, error_summary,
+                        started_at, completed_at, updated_at
+                    )
+                    VALUES (
+                        %s::uuid,%s,%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,
+                        %s::timestamptz,%s::timestamptz,NOW()
+                    )
+                    ON CONFLICT (id)
+                    DO UPDATE SET
+                        status = EXCLUDED.status,
+                        processed_count = EXCLUDED.processed_count,
+                        stored_count = EXCLUDED.stored_count,
+                        failed_count = EXCLUDED.failed_count,
+                        checkpoint = EXCLUDED.checkpoint,
+                        error_summary = EXCLUDED.error_summary,
+                        completed_at = EXCLUDED.completed_at,
+                        updated_at = NOW()
+                    """,
+                    (
+                        payload["job_id"],
+                        payload.get("source", "manual"),
+                        payload.get("query"),
+                        payload.get("status", "running"),
+                        int(payload.get("processed", 0)),
+                        int(payload.get("stored", 0)),
+                        int(payload.get("failed", 0)),
+                        json.dumps(payload),
+                        json.dumps(payload.get("errors", [])),
+                        payload.get("started_at"),
+                        payload.get("completed_at"),
+                    ),
+                )
+                conn.commit()
+
+    def get_ingestion_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        if not self.configured:
+            return None
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id::text, source_name, query, status, processed_count,
+                           stored_count, failed_count, checkpoint, error_summary,
+                           started_at, completed_at, updated_at
+                    FROM ingestion_jobs
+                    WHERE id = %s::uuid
+                    """,
+                    (job_id,),
+                )
+                row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "job_id": row[0],
+            "source": row[1],
+            "query": row[2],
+            "status": row[3],
+            "processed": row[4],
+            "stored": row[5],
+            "failed": row[6],
+            "checkpoint": row[7],
+            "errors": row[8],
+            "started_at": row[9].isoformat() if row[9] else None,
+            "completed_at": row[10].isoformat() if row[10] else None,
+            "updated_at": row[11].isoformat() if row[11] else None,
+        }
