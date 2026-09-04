@@ -7,6 +7,7 @@ from typing import Optional, Dict, Any
 
 from .jobs import jobs
 from .music_brain.batch import DatasetBatchIngestor
+from .music_brain.context import MusicBrainContextBuilder
 from .music_brain.ingestion import MusicIngestionPipeline
 from .music_brain.rights import SampleRightsEngine
 from .music_brain.search import MusicBrainSearch
@@ -20,7 +21,7 @@ from .services.router import GenerationRouter
 from .services.section_repair import SectionRepairEngine
 from .services.stems import StemSeparator
 
-app = FastAPI(title="Just Maker AI Backend", version="0.6.0")
+app = FastAPI(title="Just Maker AI Backend", version="0.7.0")
 
 allowed_origins = [
     origin.strip()
@@ -51,6 +52,7 @@ music_brain_search = MusicBrainSearch()
 music_ingestion = MusicIngestionPipeline()
 sample_rights = SampleRightsEngine()
 dataset_ingestor = DatasetBatchIngestor()
+music_context_builder = MusicBrainContextBuilder(music_brain_search)
 
 
 class GenerateRequest(BaseModel):
@@ -92,11 +94,19 @@ class MusicBrainzImportRequest(BaseModel):
 
 
 def run_generation(req: GenerateRequest):
+    music_context = music_context_builder.build(req.prompt)
+
     plan = planner.build_plan(
         prompt=req.prompt,
         bpm=req.bpm,
         key=req.key,
         duration_seconds=req.duration_seconds,
+    )
+    plan = music_context_builder.apply_to_plan(
+        plan,
+        music_context,
+        user_bpm_supplied=req.bpm is not None,
+        user_key_supplied=req.key is not None,
     )
     plan = arranger.apply(plan)
 
@@ -211,10 +221,11 @@ def process_job(job_id: str, req: GenerateRequest):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "0.6.0",
+        "version": "0.7.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
+            "music-brain-retrieval",
             "producer",
             "arrangement",
             "generation",
@@ -232,7 +243,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "0.5.0",
+        "version": "0.7.0",
         "generator": router.provider,
     }
 
