@@ -90,6 +90,7 @@ class GenerateResponse(BaseModel):
     stems: Dict[str, Any]
     repetition: Dict[str, Any]
     mastering: Dict[str, Any]
+    production_critic: Dict[str, Any]
 
 
 class MusicSearchRequest(BaseModel):
