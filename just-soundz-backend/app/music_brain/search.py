@@ -28,10 +28,17 @@ class MusicBrainSearch:
             only_sample_eligible=sample_eligible_only,
         )
 
+        graph_results = []
+        if self.graph.configured and vector_results:
+            top_external_id = vector_results[0].get("external_id")
+            if top_external_id:
+                graph_results = self.graph.related(top_external_id, limit=min(limit, 25))
+
         return {
             "query": query,
             "sample_eligible_only": sample_eligible_only,
             "results": vector_results,
+            "graph_results": graph_results,
             "database_configured": self.db.configured,
             "graph_configured": self.graph.configured,
         }

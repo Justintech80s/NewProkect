@@ -136,7 +136,7 @@ class MusicDatabase:
 
         sql = f"""
             SELECT
-                s.id, s.title, s.artist_name, s.album_name, s.release_year,
+                s.id, s.external_id, s.title, s.artist_name, s.album_name, s.release_year,
                 s.bpm, s.musical_key, s.genres, s.mood, s.instruments,
                 r.status, r.sampling_allowed, r.commercial_use,
                 1 - (e.embedding <=> %s::extensions.vector) AS similarity
@@ -157,19 +157,20 @@ class MusicDatabase:
         return [
             {
                 "id": row[0],
-                "title": row[1],
-                "artist": row[2],
-                "album": row[3],
-                "year": row[4],
-                "bpm": row[5],
-                "key": row[6],
-                "genres": row[7] or [],
-                "mood": row[8] or [],
-                "instruments": row[9] or [],
-                "rights_status": row[10],
-                "sampling_allowed": row[11],
-                "commercial_use": row[12],
-                "similarity": float(row[13]),
+                "external_id": row[1],
+                "title": row[2],
+                "artist": row[3],
+                "album": row[4],
+                "year": row[5],
+                "bpm": row[6],
+                "key": row[7],
+                "genres": row[8] or [],
+                "mood": row[9] or [],
+                "instruments": row[10] or [],
+                "rights_status": row[11],
+                "sampling_allowed": row[12],
+                "commercial_use": row[13],
+                "similarity": float(row[14]),
             }
             for row in rows
         ]
