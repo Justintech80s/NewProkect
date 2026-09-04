@@ -19,10 +19,11 @@ from .services.quality import QualityJudge
 from .services.repetition import RepetitionDetector
 from .services.router import GenerationRouter
 from .services.sample_brain import SampleBrain
+from .services.sample_processor import SampleProcessor
 from .services.section_repair import SectionRepairEngine
 from .services.stems import StemSeparator
 
-app = FastAPI(title="Just Maker AI Backend", version="0.8.0")
+app = FastAPI(title="Just Maker AI Backend", version="0.9.0")
 
 allowed_origins = [
     origin.strip()
@@ -44,6 +45,7 @@ planner = ProducerPlanner()
 arranger = ArrangementEngine()
 router = GenerationRouter()
 sample_brain = SampleBrain()
+sample_processor = SampleProcessor()
 repetition_detector = RepetitionDetector()
 repair_engine = SectionRepairEngine()
 mastering = MasteringEngine()
@@ -111,6 +113,7 @@ def run_generation(req: GenerateRequest):
         user_key_supplied=req.key is not None,
     )
     plan = sample_brain.apply(plan)
+    plan = sample_processor.process_plan(plan)
     plan = arranger.apply(plan)
 
     generation = router.generate(plan)
@@ -224,13 +227,14 @@ def process_job(job_id: str, req: GenerateRequest):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "0.8.0",
+        "version": "0.9.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
             "music-brain-retrieval",
             "producer",
             "sample-brain",
+            "sample-processing",
             "arrangement",
             "generation",
             "repetition-check",
@@ -247,7 +251,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "0.8.0",
+        "version": "0.9.0",
         "generator": router.provider,
     }
 
