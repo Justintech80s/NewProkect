@@ -35,10 +35,12 @@ from .services.sample_processor import SampleProcessor
 from .services.section_repair import SectionRepairEngine
 from .services.self_repair import SelfRepairEngine
 from .services.stem_arranger import StemArranger
+from .services.stem_generator import ProfessionalStemGenerator
+from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="1.9.0")
+app = FastAPI(title="Just Maker AI Backend", version="2.0.0")
 
 allowed_origins = [
     origin.strip()
@@ -67,6 +69,8 @@ durable_jobs = DurableGenerationJobStore()
 conditioning_compiler = ConditioningCompiler()
 production_critic = ProductionCritic()
 stem_arranger = StemArranger()
+professional_stems = ProfessionalStemGenerator()
+stem_mixer = StemMixer()
 producer_dna = ProducerDNAEngine()
 rhythm_transformer = RhythmTransformer()
 harmony_planner = HarmonyPlanner()
@@ -129,6 +133,33 @@ class MusicBrainzImportRequest(BaseModel):
     max_records: int = Field(default=250, ge=1, le=5000)
 
 
+def generate_professional_stem_mix(plan: Dict[str, Any]) -> Dict[str, Any]:
+    generated = []
+    for index, request in enumerate(professional_stems.build_requests(plan)):
+        stem_plan = request["plan"]
+        stem_plan = advanced_conditioning.apply(stem_plan)
+        stem_plan = conditioning_compiler.apply(stem_plan)
+
+        result = router.generate(stem_plan, variation=100 + index)
+        if result.get("audio_path"):
+            generated.append({
+                "stem": request["stem"],
+                "audio_path": result["audio_path"],
+                "provider": result.get("provider"),
+                "routing": result.get("routing"),
+            })
+
+    mixed = stem_mixer.mix(
+        generated,
+        plan.get("stem_arrangement") or {},
+    )
+    return {
+        "requested": len(professional_stems.build_requests(plan)),
+        "generated": generated,
+        "mix": mixed,
+    }
+
+
 def run_generation(req: GenerateRequest):
     music_context = music_context_builder.build(req.prompt)
 
@@ -155,7 +186,31 @@ def run_generation(req: GenerateRequest):
     plan = advanced_conditioning.apply(plan)
     plan = conditioning_compiler.apply(plan)
 
-    generation = router.generate(plan)
+    professional_stem_result = {
+        "enabled": bool(req.make_stems),
+        "generated": [],
+        "mix": {"mixed": False, "reason": "stems_disabled"},
+    }
+
+    if req.make_stems:
+        professional_stem_result = {
+            "enabled": True,
+            **generate_professional_stem_mix(plan),
+        }
+
+    if (professional_stem_result.get("mix") or {}).get("mixed"):
+        generation = {
+            "provider": "professional-stem-mix",
+            "audio_path": professional_stem_result["mix"]["audio_path"],
+            "audio_url": None,
+            "metadata": {
+                "stem_count": professional_stem_result["mix"]["stem_count"],
+                "stem_generation": True,
+            },
+        }
+    else:
+        generation = router.generate(plan)
+
     if not generation.get("audio_path") and not generation.get("audio_url"):
         raise RuntimeError(generation.get("message", "No generator is configured."))
 
@@ -262,11 +317,20 @@ def run_generation(req: GenerateRequest):
         )
         quality_attempts += 1
 
-    stem_result = (
-        stems.separate(generation["audio_path"])
-        if req.make_stems and generation.get("audio_path")
-        else {"enabled": False, "reason": "no local audio path or stems disabled"}
-    )
+    if req.make_stems and professional_stem_result.get("generated"):
+        stem_result = {
+            "enabled": True,
+            "engine": "native-generated-stems",
+            "generated": professional_stem_result.get("generated", []),
+            "mix": professional_stem_result.get("mix", {}),
+        }
+    elif req.make_stems and generation.get("audio_path"):
+        stem_result = stems.separate(generation["audio_path"])
+    else:
+        stem_result = {
+            "enabled": False,
+            "reason": "no local audio path or stems disabled",
+        }
 
     return {
         "plan": plan,
@@ -365,7 +429,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "1.9.0",
+        "version": "2.0.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -381,6 +445,8 @@ def root():
             "stem-arrangement",
             "advanced-audio-conditioning",
             "conditioning-compiler",
+            "native-stem-generation",
+            "stem-mixdown",
             "capability-aware-worker-selection",
             "gpu-model-worker",
             "generation",
@@ -410,7 +476,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "1.9.0",
+        "version": "2.0.0",
         "generator": router.provider,
     }
 
