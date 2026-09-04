@@ -32,6 +32,14 @@ class MusicIngestionPipeline:
             embedding = self.embeddings.text_embedding(semantic_text)
             self.db.set_embedding(song_id, embedding)
 
+            provenance = (
+                normalized.get("metadata", {}).get("provenance")
+                if isinstance(normalized.get("metadata"), dict)
+                else None
+            )
+            if provenance:
+                self.db.set_provenance(song_id, provenance)
+
         graph_result = self.graph.upsert_song_relationships(normalized)
 
         return {
