@@ -84,8 +84,9 @@ class GPUWorker:
 
         return {
             "provider": f"gpu:{self.backend}",
-            "audio_path": str(path),
+            "audio_path": None,
             "audio_url": None,
+            "artifact_filename": filename,
             "metadata": {
                 **metadata,
                 "model_id": self.model_id,
