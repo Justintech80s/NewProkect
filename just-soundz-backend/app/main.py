@@ -389,6 +389,32 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
             durable_jobs.save_artifact(persisted)
             artifacts.append(persisted)
 
+        for stem in (result.get("stems") or {}).get("generated", []):
+            stem_path = stem.get("audio_path")
+            stem_name = stem.get("stem")
+            if not stem_path or not stem_name:
+                continue
+            try:
+                stem_manifest = artifact_manifest.from_path(
+                    stem_path,
+                    artifact_type=f"stem:{stem_name}",
+                    job_id=job_id,
+                    metadata={
+                        "provider": stem.get("provider"),
+                        "stem": stem_name,
+                        "bpm": (result.get("plan") or {}).get("bpm"),
+                        "key": (result.get("plan") or {}).get("key"),
+                    },
+                )
+                stem_persisted = artifact_store.persist({
+                    **stem_manifest,
+                    "user_id": user_id,
+                })
+                durable_jobs.save_artifact(stem_persisted)
+                artifacts.append(stem_persisted)
+            except Exception:
+                pass
+
         result["artifacts"] = artifacts
         jobs.update(job_id, status="complete", result=result)
         if user_id:
