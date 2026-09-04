@@ -12,6 +12,7 @@ class Job:
     status: str = "queued"
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    user_id: Optional[str] = None
 
 
 class JobStore:
@@ -25,11 +26,11 @@ class JobStore:
         self._jobs: Dict[str, Job] = {}
         self._lock = threading.Lock()
 
-    def create(self) -> Job:
-        return self.create_with_id(str(uuid.uuid4()))
+    def create(self, user_id: Optional[str] = None) -> Job:
+        return self.create_with_id(str(uuid.uuid4()), user_id=user_id)
 
-    def create_with_id(self, job_id: str) -> Job:
-        job = Job(id=job_id)
+    def create_with_id(self, job_id: str, user_id: Optional[str] = None) -> Job:
+        job = Job(id=job_id, user_id=user_id)
         with self._lock:
             self._jobs[job.id] = job
         return job

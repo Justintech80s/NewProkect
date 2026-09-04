@@ -1,5 +1,5 @@
 import os
-from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -14,6 +14,7 @@ from .music_brain.search import MusicBrainSearch
 from .services.analysis import AudioAnalyzer
 from .services.artifacts import ArtifactManifest, ArtifactStore
 from .services.artifact_delivery import SecureArtifactDelivery
+from .services.auth import SupabaseUserAuth
 from .services.arranger import ArrangementEngine
 from .services.conditioning import ConditioningCompiler
 from .services.durable_jobs import DurableGenerationJobStore
@@ -35,7 +36,7 @@ from .services.self_repair import SelfRepairEngine
 from .services.stem_arranger import StemArranger
 from .services.stems import StemSeparator
 
-app = FastAPI(title="Just Maker AI Backend", version="1.5.0")
+app = FastAPI(title="Just Maker AI Backend", version="1.6.0")
 
 allowed_origins = [
     origin.strip()
@@ -57,6 +58,7 @@ planner = ProducerPlanner()
 artifact_manifest = ArtifactManifest()
 artifact_store = ArtifactStore()
 artifact_delivery = SecureArtifactDelivery()
+user_auth = SupabaseUserAuth()
 job_recovery = JobRecoveryPlanner()
 durable_jobs = DurableGenerationJobStore()
 conditioning_compiler = ConditioningCompiler()
@@ -280,7 +282,7 @@ def run_generation(req: GenerateRequest):
     }
 
 
-def process_job(job_id: str, req: GenerateRequest):
+def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
     jobs.update(job_id, status="running")
     durable_jobs.update(job_id, status="running", stage="planning", progress=0.05)
 
@@ -303,7 +305,10 @@ def process_job(job_id: str, req: GenerateRequest):
                     "key": (result.get("plan") or {}).get("key"),
                 },
             )
-            persisted = artifact_store.persist(manifest)
+            persisted = artifact_store.persist({
+                **manifest,
+                "user_id": user_id,
+            })
             durable_jobs.save_artifact(persisted)
             artifacts.append(persisted)
 
@@ -330,7 +335,7 @@ def process_job(job_id: str, req: GenerateRequest):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "1.5.0",
+        "version": "1.6.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -358,6 +363,8 @@ def root():
             "artifact-persistence",
             "secure-signed-artifact-delivery",
             "job-recovery",
+            "authenticated-user-ownership",
+            "per-user-job-isolation",
         ],
     }
 
@@ -367,9 +374,24 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "1.5.0",
+        "version": "1.6.0",
         "generator": router.provider,
     }
+
+
+
+def require_user(authorization: Optional[str]) -> Dict[str, Any]:
+    try:
+        return user_auth.get_user(authorization)
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.get("/v1/me")
+def current_user(authorization: Optional[str] = Header(default=None)):
+    return require_user(authorization)
 
 
 @app.get("/v1/generation-workers")
@@ -472,17 +494,22 @@ def generate(req: GenerateRequest):
 
 
 @app.post("/v1/jobs")
-def create_job(req: GenerateRequest, background_tasks: BackgroundTasks):
-    durable = durable_jobs.create(req.model_dump())
+def create_job(
+    req: GenerateRequest,
+    background_tasks: BackgroundTasks,
+    authorization: Optional[str] = Header(default=None),
+):
+    user = require_user(authorization)
+    durable = durable_jobs.create(req.model_dump(), user_id=user["id"])
 
     if durable_jobs.configured:
         job_id = durable["job_id"]
-        jobs.create_with_id(job_id)
+        jobs.create_with_id(job_id, user_id=user["id"])
     else:
-        job = jobs.create()
+        job = jobs.create(user_id=user["id"])
         job_id = job.id
 
-    background_tasks.add_task(process_job, job_id, req)
+    background_tasks.add_task(process_job, job_id, req, user["id"])
     return {
         "job_id": job_id,
         "status": "queued",
@@ -491,8 +518,13 @@ def create_job(req: GenerateRequest, background_tasks: BackgroundTasks):
 
 
 @app.post("/v1/jobs/{job_id}/retry")
-def retry_job(job_id: str, background_tasks: BackgroundTasks):
-    original = durable_jobs.get(job_id)
+def retry_job(
+    job_id: str,
+    background_tasks: BackgroundTasks,
+    authorization: Optional[str] = Header(default=None),
+):
+    user = require_user(authorization)
+    original = durable_jobs.get(job_id, user_id=user["id"])
     if not original:
         raise HTTPException(status_code=404, detail="Durable job not found")
 
@@ -511,9 +543,10 @@ def retry_job(job_id: str, background_tasks: BackgroundTasks):
         retry_of=job_id,
         retry_count=int(original.get("retry_count") or 0) + 1,
         max_retries=int(original.get("max_retries") or 3),
+        user_id=user["id"],
     )
-    jobs.create_with_id(retry["job_id"])
-    background_tasks.add_task(process_job, retry["job_id"], req)
+    jobs.create_with_id(retry["job_id"], user_id=user["id"])
+    background_tasks.add_task(process_job, retry["job_id"], req, user["id"])
     return {
         "job_id": retry["job_id"],
         "status": "queued",
@@ -523,8 +556,16 @@ def retry_job(job_id: str, background_tasks: BackgroundTasks):
 
 
 @app.post("/v1/jobs/{job_id}/artifacts/{artifact_id}/signed-url")
-def sign_job_artifact(job_id: str, artifact_id: str, expires_in: int = 900):
-    artifacts = durable_jobs.artifacts(job_id)
+def sign_job_artifact(
+    job_id: str,
+    artifact_id: str,
+    expires_in: int = 900,
+    authorization: Optional[str] = Header(default=None),
+):
+    user = require_user(authorization)
+    if not durable_jobs.get(job_id, user_id=user["id"]):
+        raise HTTPException(status_code=404, detail="Job not found")
+    artifacts = durable_jobs.artifacts(job_id, user_id=user["id"])
     artifact = next((a for a in artifacts if a.get("id") == artifact_id), None)
     if not artifact:
         raise HTTPException(status_code=404, detail="Artifact not found for this job")
@@ -546,14 +587,15 @@ def sign_job_artifact(job_id: str, artifact_id: str, expires_in: int = 900):
 
 
 @app.get("/v1/jobs/{job_id}")
-def get_job(job_id: str):
-    durable = durable_jobs.get(job_id)
+def get_job(job_id: str, authorization: Optional[str] = Header(default=None)):
+    user = require_user(authorization)
+    durable = durable_jobs.get(job_id, user_id=user["id"])
     if durable:
-        durable["artifacts"] = durable_jobs.artifacts(job_id)
+        durable["artifacts"] = durable_jobs.artifacts(job_id, user_id=user["id"])
         return durable
 
     job = jobs.get(job_id)
-    if not job:
+    if not job or job.user_id != user["id"]:
         raise HTTPException(status_code=404, detail="Job not found")
     return {
         "job_id": job.id,
