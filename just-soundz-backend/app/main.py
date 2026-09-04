@@ -37,7 +37,7 @@ from .services.stem_arranger import StemArranger
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="1.7.0")
+app = FastAPI(title="Just Maker AI Backend", version="1.8.0")
 
 allowed_origins = [
     origin.strip()
@@ -361,7 +361,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "1.7.0",
+        "version": "1.8.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -377,6 +377,7 @@ def root():
             "stem-arrangement",
             "conditioning-compiler",
             "capability-aware-worker-selection",
+            "gpu-model-worker",
             "generation",
             "repetition-check",
             "section-repair",
@@ -404,7 +405,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "1.7.0",
+        "version": "1.8.0",
         "generator": router.provider,
     }
 
