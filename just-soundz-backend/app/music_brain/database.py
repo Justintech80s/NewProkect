@@ -1,0 +1,175 @@
+from __future__ import annotations
+
+import json
+import os
+from contextlib import contextmanager
+from typing import Any, Dict, Iterable, List, Optional
+
+
+class MusicDatabase:
+    """PostgreSQL/pgvector adapter for the Just Maker Music Brain."""
+
+    def __init__(self):
+        self.url = os.getenv("JUST_MAKER_DATABASE_URL")
+
+    @property
+    def configured(self) -> bool:
+        return bool(self.url)
+
+    @contextmanager
+    def connection(self):
+        if not self.url:
+            raise RuntimeError("JUST_MAKER_DATABASE_URL is not configured")
+        import psycopg
+        with psycopg.connect(self.url) as conn:
+            yield conn
+
+    def upsert_song(self, song: Dict[str, Any]) -> Dict[str, Any]:
+        if not self.configured:
+            return {"stored": False, "reason": "database_not_configured", "song": song}
+
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO songs (
+                        external_id, title, artist_name, album_name, release_year,
+                        bpm, musical_key, genres, mood, instruments, metadata
+                    )
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)
+                    ON CONFLICT (external_id)
+                    DO UPDATE SET
+                        title = EXCLUDED.title,
+                        artist_name = EXCLUDED.artist_name,
+                        album_name = EXCLUDED.album_name,
+                        release_year = EXCLUDED.release_year,
+                        bpm = EXCLUDED.bpm,
+                        musical_key = EXCLUDED.musical_key,
+                        genres = EXCLUDED.genres,
+                        mood = EXCLUDED.mood,
+                        instruments = EXCLUDED.instruments,
+                        metadata = EXCLUDED.metadata
+                    RETURNING id
+                    """,
+                    (
+                        song["external_id"],
+                        song["title"],
+                        song["artist_name"],
+                        song.get("album_name"),
+                        song.get("release_year"),
+                        song.get("bpm"),
+                        song.get("musical_key"),
+                        song.get("genres", []),
+                        song.get("mood", []),
+                        song.get("instruments", []),
+                        json.dumps(song.get("metadata", {})),
+                    ),
+                )
+                song_id = cur.fetchone()[0]
+                conn.commit()
+        return {"stored": True, "id": song_id}
+
+    def set_rights(self, song_id: int, rights: Dict[str, Any]) -> None:
+        if not self.configured:
+            return
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO song_rights (
+                        song_id, status, source, license_name,
+                        commercial_use, sampling_allowed, metadata
+                    )
+                    VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb)
+                    ON CONFLICT (song_id)
+                    DO UPDATE SET
+                        status = EXCLUDED.status,
+                        source = EXCLUDED.source,
+                        license_name = EXCLUDED.license_name,
+                        commercial_use = EXCLUDED.commercial_use,
+                        sampling_allowed = EXCLUDED.sampling_allowed,
+                        metadata = EXCLUDED.metadata
+                    """,
+                    (
+                        song_id,
+                        rights.get("status", "unknown"),
+                        rights.get("source"),
+                        rights.get("license_name"),
+                        bool(rights.get("commercial_use", False)),
+                        bool(rights.get("sampling_allowed", False)),
+                        json.dumps(rights.get("metadata", {})),
+                    ),
+                )
+                conn.commit()
+
+    def set_embedding(self, song_id: int, embedding: Iterable[float]) -> None:
+        if not self.configured:
+            return
+        vector = "[" + ",".join(str(float(x)) for x in embedding) + "]"
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO song_embeddings (song_id, embedding)
+                    VALUES (%s, %s::vector)
+                    ON CONFLICT (song_id)
+                    DO UPDATE SET embedding = EXCLUDED.embedding
+                    """,
+                    (song_id, vector),
+                )
+                conn.commit()
+
+    def semantic_search(
+        self,
+        embedding: Iterable[float],
+        limit: int = 20,
+        only_sample_eligible: bool = False,
+    ) -> List[Dict[str, Any]]:
+        if not self.configured:
+            return []
+
+        vector = "[" + ",".join(str(float(x)) for x in embedding) + "]"
+        rights_clause = """
+            AND r.sampling_allowed = TRUE
+            AND (r.commercial_use = TRUE OR r.status = 'user_owned')
+        """ if only_sample_eligible else ""
+
+        sql = f"""
+            SELECT
+                s.id, s.title, s.artist_name, s.album_name, s.release_year,
+                s.bpm, s.musical_key, s.genres, s.mood, s.instruments,
+                r.status, r.sampling_allowed, r.commercial_use,
+                1 - (e.embedding <=> %s::vector) AS similarity
+            FROM song_embeddings e
+            JOIN songs s ON s.id = e.song_id
+            LEFT JOIN song_rights r ON r.song_id = s.id
+            WHERE 1=1
+            {rights_clause}
+            ORDER BY e.embedding <=> %s::vector
+            LIMIT %s
+        """
+
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (vector, vector, limit))
+                rows = cur.fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "title": row[1],
+                "artist": row[2],
+                "album": row[3],
+                "year": row[4],
+                "bpm": row[5],
+                "key": row[6],
+                "genres": row[7] or [],
+                "mood": row[8] or [],
+                "instruments": row[9] or [],
+                "rights_status": row[10],
+                "sampling_allowed": row[11],
+                "commercial_use": row[12],
+                "similarity": float(row[13]),
+            }
+            for row in rows
+        ]

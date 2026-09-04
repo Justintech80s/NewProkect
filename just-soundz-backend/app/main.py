@@ -6,6 +6,9 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 
 from .jobs import jobs
+from .music_brain.ingestion import MusicIngestionPipeline
+from .music_brain.rights import SampleRightsEngine
+from .music_brain.search import MusicBrainSearch
 from .services.analysis import AudioAnalyzer
 from .services.arranger import ArrangementEngine
 from .services.mastering import MasteringEngine
@@ -16,7 +19,7 @@ from .services.router import GenerationRouter
 from .services.section_repair import SectionRepairEngine
 from .services.stems import StemSeparator
 
-app = FastAPI(title="Just Soundz AI Backend", version="0.4.0")
+app = FastAPI(title="Just Maker AI Backend", version="0.5.0")
 
 allowed_origins = [
     origin.strip()
@@ -43,6 +46,9 @@ mastering = MasteringEngine()
 quality = QualityJudge()
 stems = StemSeparator()
 analyzer = AudioAnalyzer()
+music_brain_search = MusicBrainSearch()
+music_ingestion = MusicIngestionPipeline()
+sample_rights = SampleRightsEngine()
 
 
 class GenerateRequest(BaseModel):
@@ -62,6 +68,20 @@ class GenerateResponse(BaseModel):
     stems: Dict[str, Any]
     repetition: Dict[str, Any]
     mastering: Dict[str, Any]
+
+
+class MusicSearchRequest(BaseModel):
+    query: str = Field(min_length=2)
+    limit: int = Field(default=20, ge=1, le=100)
+    sample_eligible_only: bool = False
+
+
+class RightsCheckRequest(BaseModel):
+    status: str
+    source: Optional[str] = None
+    license_name: Optional[str] = None
+    commercial_use: bool = False
+    sampling_allowed: bool = False
 
 
 def run_generation(req: GenerateRequest):
@@ -183,8 +203,8 @@ def process_job(job_id: str, req: GenerateRequest):
 @app.get("/")
 def root():
     return {
-        "service": "Just Soundz AI Backend",
-        "version": "0.4.0",
+        "service": "Just Maker AI Backend",
+        "version": "0.5.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -204,10 +224,42 @@ def root():
 def health():
     return {
         "ok": True,
-        "service": "just-soundz-ai-backend",
-        "version": "0.4.0",
+        "service": "just-maker-ai-backend",
+        "version": "0.5.0",
         "generator": router.provider,
     }
+
+
+@app.get("/v1/music-brain/status")
+def music_brain_status():
+    return {
+        "database_configured": music_brain_search.db.configured,
+        "graph_configured": music_brain_search.graph.configured,
+        "embedding_dimension": music_brain_search.embeddings.dimension,
+        "sampling_policy": "rights-aware",
+    }
+
+
+@app.post("/v1/music-brain/search")
+def search_music_brain(req: MusicSearchRequest):
+    return music_brain_search.search(
+        query=req.query,
+        limit=req.limit,
+        sample_eligible_only=req.sample_eligible_only,
+    )
+
+
+@app.post("/v1/music-brain/ingest")
+def ingest_music_record(record: Dict[str, Any]):
+    try:
+        return music_ingestion.ingest(record)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/v1/music-brain/rights/check")
+def check_sample_rights(req: RightsCheckRequest):
+    return sample_rights.evaluate(req.model_dump())
 
 
 @app.post("/v1/render")
