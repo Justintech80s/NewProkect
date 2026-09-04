@@ -6,13 +6,17 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 
 from .jobs import jobs
-from .services.producer import ProducerPlanner
-from .services.router import GenerationRouter
-from .services.quality import QualityJudge
-from .services.stems import StemSeparator
 from .services.analysis import AudioAnalyzer
+from .services.arranger import ArrangementEngine
+from .services.mastering import MasteringEngine
+from .services.producer import ProducerPlanner
+from .services.quality import QualityJudge
+from .services.repetition import RepetitionDetector
+from .services.router import GenerationRouter
+from .services.section_repair import SectionRepairEngine
+from .services.stems import StemSeparator
 
-app = FastAPI(title="Just Soundz AI Backend", version="0.3.0")
+app = FastAPI(title="Just Soundz AI Backend", version="0.4.0")
 
 allowed_origins = [
     origin.strip()
@@ -31,7 +35,11 @@ app.add_middleware(
 )
 
 planner = ProducerPlanner()
+arranger = ArrangementEngine()
 router = GenerationRouter()
+repetition_detector = RepetitionDetector()
+repair_engine = SectionRepairEngine()
+mastering = MasteringEngine()
 quality = QualityJudge()
 stems = StemSeparator()
 analyzer = AudioAnalyzer()
@@ -52,6 +60,8 @@ class GenerateResponse(BaseModel):
     analysis: Dict[str, Any]
     quality: Dict[str, Any]
     stems: Dict[str, Any]
+    repetition: Dict[str, Any]
+    mastering: Dict[str, Any]
 
 
 def run_generation(req: GenerateRequest):
@@ -61,11 +71,39 @@ def run_generation(req: GenerateRequest):
         key=req.key,
         duration_seconds=req.duration_seconds,
     )
+    plan = arranger.apply(plan)
 
     generation = router.generate(plan)
-
     if not generation.get("audio_path") and not generation.get("audio_url"):
         raise RuntimeError(generation.get("message", "No generator is configured."))
+
+    repetition = {"score": 0.0, "too_repetitive": False, "reason": "remote_audio"}
+    repair_attempts = 0
+
+    if generation.get("audio_path"):
+        repetition = repetition_detector.inspect(
+            generation["audio_path"],
+            section_count=max(2, min(8, len(plan.get("arrangement", [])))),
+        )
+
+        while repetition.get("too_repetitive") and repair_attempts < 2:
+            repair_attempts += 1
+            plan = repair_engine.repair_plan(plan, repetition, repair_attempts)
+            candidate = router.generate(plan, variation=repair_attempts)
+            if not candidate.get("audio_path"):
+                break
+            generation = candidate
+            repetition = repetition_detector.inspect(
+                generation["audio_path"],
+                section_count=max(2, min(8, len(plan.get("arrangement", [])))),
+            )
+
+    mastering_result = {"mastered": False, "reason": "remote_audio"}
+    if generation.get("audio_path"):
+        mastering_result = mastering.process(generation["audio_path"])
+        if mastering_result.get("mastered"):
+            generation["unmastered_audio_path"] = generation["audio_path"]
+            generation["audio_path"] = mastering_result["audio_path"]
 
     analysis_target = generation.get("audio_path")
     analysis = analyzer.analyze(analysis_target) if analysis_target else {
@@ -75,14 +113,29 @@ def run_generation(req: GenerateRequest):
         "message": "Local analysis requires an accessible audio_path.",
     }
 
-    score = quality.score(req.prompt, analysis_target or generation["audio_url"], analysis)
+    score = quality.score(
+        req.prompt,
+        analysis_target or generation["audio_url"],
+        analysis,
+    )
 
-    attempts = 1
-    while score["score"] < req.quality_threshold and attempts < 3:
-        candidate = router.generate(plan, variation=attempts)
+    quality_attempts = 1
+    while score["score"] < req.quality_threshold and quality_attempts < 3:
+        candidate = router.generate(plan, variation=quality_attempts + repair_attempts)
         if not candidate.get("audio_path") and not candidate.get("audio_url"):
             break
+
         generation = candidate
+        if generation.get("audio_path"):
+            repetition = repetition_detector.inspect(
+                generation["audio_path"],
+                section_count=max(2, min(8, len(plan.get("arrangement", [])))),
+            )
+            mastering_result = mastering.process(generation["audio_path"])
+            if mastering_result.get("mastered"):
+                generation["unmastered_audio_path"] = generation["audio_path"]
+                generation["audio_path"] = mastering_result["audio_path"]
+
         analysis_target = generation.get("audio_path")
         analysis = analyzer.analyze(analysis_target) if analysis_target else {
             "engine": "remote-output",
@@ -90,8 +143,12 @@ def run_generation(req: GenerateRequest):
             "key": None,
             "message": "Local analysis requires an accessible audio_path.",
         }
-        score = quality.score(req.prompt, analysis_target or generation["audio_url"], analysis)
-        attempts += 1
+        score = quality.score(
+            req.prompt,
+            analysis_target or generation["audio_url"],
+            analysis,
+        )
+        quality_attempts += 1
 
     stem_result = (
         stems.separate(generation["audio_path"])
@@ -101,10 +158,16 @@ def run_generation(req: GenerateRequest):
 
     return {
         "plan": plan,
-        "generation": {**generation, "attempts": attempts},
+        "generation": {
+            **generation,
+            "attempts": quality_attempts,
+            "repair_attempts": repair_attempts,
+        },
         "analysis": analysis,
         "quality": score,
         "stems": stem_result,
+        "repetition": repetition,
+        "mastering": mastering_result,
     }
 
 
@@ -121,9 +184,19 @@ def process_job(job_id: str, req: GenerateRequest):
 def root():
     return {
         "service": "Just Soundz AI Backend",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "generator": router.provider,
         "status": "ready",
+        "pipeline": [
+            "producer",
+            "arrangement",
+            "generation",
+            "repetition-check",
+            "section-repair",
+            "mastering",
+            "quality-check",
+            "stems",
+        ],
     }
 
 
@@ -132,14 +205,14 @@ def health():
     return {
         "ok": True,
         "service": "just-soundz-ai-backend",
-        "version": "0.3.0",
+        "version": "0.4.0",
         "generator": router.provider,
     }
 
 
 @app.post("/v1/render")
 def render(req: GenerateRequest):
-    """Return an immediately playable/downloadable WAV response."""
+    """Return an immediately playable/downloadable mastered WAV response."""
     try:
         result = run_generation(req)
     except RuntimeError as exc:
@@ -155,11 +228,12 @@ def render(req: GenerateRequest):
     return FileResponse(
         path,
         media_type="audio/wav",
-        filename="just-soundz-instrumental.wav",
+        filename="just-soundz-instrumental-mastered.wav",
         headers={
             "X-Just-Soundz-Provider": str(result["generation"].get("provider", "unknown")),
             "X-Just-Soundz-BPM": str(result["plan"].get("bpm", "")),
             "X-Just-Soundz-Key": str(result["plan"].get("key", "")),
+            "X-Just-Soundz-Mastered": str(result["mastering"].get("mastered", False)).lower(),
         },
     )
 
