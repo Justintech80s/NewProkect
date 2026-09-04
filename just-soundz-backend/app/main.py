@@ -13,17 +13,21 @@ from .music_brain.rights import SampleRightsEngine
 from .music_brain.search import MusicBrainSearch
 from .services.analysis import AudioAnalyzer
 from .services.arranger import ArrangementEngine
+from .services.harmony_planner import HarmonyPlanner
+from .services.instrumentation_planner import InstrumentationPlanner
 from .services.mastering import MasteringEngine
 from .services.producer import ProducerPlanner
+from .services.producer_dna import ProducerDNAEngine
 from .services.quality import QualityJudge
 from .services.repetition import RepetitionDetector
+from .services.rhythm_transformer import RhythmTransformer
 from .services.router import GenerationRouter
 from .services.sample_brain import SampleBrain
 from .services.sample_processor import SampleProcessor
 from .services.section_repair import SectionRepairEngine
 from .services.stems import StemSeparator
 
-app = FastAPI(title="Just Maker AI Backend", version="0.9.0")
+app = FastAPI(title="Just Maker AI Backend", version="1.0.0")
 
 allowed_origins = [
     origin.strip()
@@ -42,6 +46,10 @@ app.add_middleware(
 )
 
 planner = ProducerPlanner()
+producer_dna = ProducerDNAEngine()
+rhythm_transformer = RhythmTransformer()
+harmony_planner = HarmonyPlanner()
+instrumentation_planner = InstrumentationPlanner()
 arranger = ArrangementEngine()
 router = GenerationRouter()
 sample_brain = SampleBrain()
@@ -112,6 +120,10 @@ def run_generation(req: GenerateRequest):
         user_bpm_supplied=req.bpm is not None,
         user_key_supplied=req.key is not None,
     )
+    plan = producer_dna.apply(req.prompt, plan)
+    plan = rhythm_transformer.apply(plan)
+    plan = harmony_planner.apply(plan)
+    plan = instrumentation_planner.apply(plan)
     plan = sample_brain.apply(plan)
     plan = sample_processor.process_plan(plan)
     plan = arranger.apply(plan)
@@ -227,12 +239,16 @@ def process_job(job_id: str, req: GenerateRequest):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "0.9.0",
+        "version": "1.0.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
             "music-brain-retrieval",
             "producer",
+            "producer-dna",
+            "rhythm-transformer",
+            "harmony-planner",
+            "instrumentation-planner",
             "sample-brain",
             "sample-processing",
             "arrangement",
@@ -251,7 +267,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "0.9.0",
+        "version": "1.0.0",
         "generator": router.provider,
     }
 
