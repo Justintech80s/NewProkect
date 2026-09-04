@@ -66,6 +66,7 @@ class GPUWorker:
             self.max_seconds,
         )
         prompt = self.compiler.compile(plan, conditioning, variation)
+        controls = conditioning.get("advanced_controls") or {}
         adapter = self._get_adapter()
 
         started = time.time()
@@ -73,6 +74,7 @@ class GPUWorker:
             prompt=prompt,
             duration_seconds=duration,
             variation=variation,
+            controls=controls,
         )
 
         digest = hashlib.sha256(
@@ -93,6 +95,7 @@ class GPUWorker:
                 "duration_seconds": duration,
                 "elapsed_seconds": round(time.time() - started, 3),
                 "conditioning_prompt": prompt,
+                "advanced_controls": controls,
                 "variation": variation,
             },
         }
