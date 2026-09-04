@@ -1,4 +1,5 @@
-CREATE EXTENSION IF NOT EXISTS vector;
+CREATE SCHEMA IF NOT EXISTS extensions;
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA extensions;
 
 CREATE TABLE IF NOT EXISTS songs (
     id BIGSERIAL PRIMARY KEY,
@@ -35,7 +36,7 @@ CREATE TABLE IF NOT EXISTS song_rights (
 
 CREATE TABLE IF NOT EXISTS song_embeddings (
     song_id BIGINT PRIMARY KEY REFERENCES songs(id) ON DELETE CASCADE,
-    embedding VECTOR(512) NOT NULL
+    embedding extensions.vector(512) NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS song_embeddings_hnsw_cosine_idx
