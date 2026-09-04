@@ -1,4 +1,7 @@
+import os
 from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 
@@ -9,7 +12,23 @@ from .services.quality import QualityJudge
 from .services.stems import StemSeparator
 from .services.analysis import AudioAnalyzer
 
-app = FastAPI(title="Just Soundz AI Backend", version="0.2.0")
+app = FastAPI(title="Just Soundz AI Backend", version="0.3.0")
+
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv(
+        "JUST_SOUNDZ_ALLOWED_ORIGINS",
+        "https://just-soundz-ai-companion.justmarsh88.chatgpt.site",
+    ).split(",")
+    if origin.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
+)
 
 planner = ProducerPlanner()
 router = GenerationRouter()
@@ -98,9 +117,51 @@ def process_job(job_id: str, req: GenerateRequest):
         jobs.update(job_id, status="failed", error=str(exc))
 
 
+@app.get("/")
+def root():
+    return {
+        "service": "Just Soundz AI Backend",
+        "version": "0.3.0",
+        "generator": router.provider,
+        "status": "ready",
+    }
+
+
 @app.get("/health")
 def health():
-    return {"ok": True, "service": "just-soundz-ai-backend", "version": "0.2.0"}
+    return {
+        "ok": True,
+        "service": "just-soundz-ai-backend",
+        "version": "0.3.0",
+        "generator": router.provider,
+    }
+
+
+@app.post("/v1/render")
+def render(req: GenerateRequest):
+    """Return an immediately playable/downloadable WAV response."""
+    try:
+        result = run_generation(req)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    path = result["generation"].get("audio_path")
+    if not path:
+        raise HTTPException(
+            status_code=501,
+            detail="The selected remote provider returned a URL instead of a local render.",
+        )
+
+    return FileResponse(
+        path,
+        media_type="audio/wav",
+        filename="just-soundz-instrumental.wav",
+        headers={
+            "X-Just-Soundz-Provider": str(result["generation"].get("provider", "unknown")),
+            "X-Just-Soundz-BPM": str(result["plan"].get("bpm", "")),
+            "X-Just-Soundz-Key": str(result["plan"].get("key", "")),
+        },
+    )
 
 
 @app.post("/v1/generate", response_model=GenerateResponse)

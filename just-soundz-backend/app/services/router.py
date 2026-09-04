@@ -1,6 +1,7 @@
 import os
 from typing import Dict, Any
 
+from .procedural import ProceduralMusicProvider
 from .providers import (
     MusicGenJascoProvider,
     RemoteWorkerProvider,
@@ -12,18 +13,17 @@ class GenerationRouter:
     """Provider-agnostic generation layer."""
 
     def __init__(self):
-        self.provider = os.getenv("JUST_SOUNDZ_GENERATOR", "disabled")
+        # Generate usable audio immediately even before an external GPU provider
+        # is connected. A production AI model can replace this by environment var.
+        self.provider = os.getenv("JUST_SOUNDZ_GENERATOR", "built-in-procedural")
 
     def generate(self, plan: Dict[str, Any], variation: int = 0):
         provider = self._build_provider()
         if provider is None:
             return {
-                "provider": "disabled",
+                "provider": "unavailable",
                 "audio_path": None,
-                "message": (
-                    "Generation architecture is installed, but no commercial or "
-                    "approved music-model provider is configured yet."
-                ),
+                "message": f"Unknown or incomplete provider configuration: {self.provider}",
             }
 
         result = provider.generate(plan, variation)
@@ -32,8 +32,8 @@ class GenerationRouter:
         return result
 
     def _build_provider(self):
-        if self.provider == "disabled":
-            return None
+        if self.provider == "built-in-procedural":
+            return ProceduralMusicProvider()
 
         url = os.getenv("JUST_SOUNDZ_WORKER_URL")
         if not url:
