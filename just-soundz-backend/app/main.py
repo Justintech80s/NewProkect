@@ -27,10 +27,11 @@ from .services.router import GenerationRouter
 from .services.sample_brain import SampleBrain
 from .services.sample_processor import SampleProcessor
 from .services.section_repair import SectionRepairEngine
+from .services.self_repair import SelfRepairEngine
 from .services.stem_arranger import StemArranger
 from .services.stems import StemSeparator
 
-app = FastAPI(title="Just Maker AI Backend", version="1.1.0")
+app = FastAPI(title="Just Maker AI Backend", version="1.2.0")
 
 allowed_origins = [
     origin.strip()
@@ -62,6 +63,7 @@ sample_brain = SampleBrain()
 sample_processor = SampleProcessor()
 repetition_detector = RepetitionDetector()
 repair_engine = SectionRepairEngine()
+self_repair = SelfRepairEngine()
 mastering = MasteringEngine()
 quality = QualityJudge()
 stems = StemSeparator()
@@ -190,8 +192,25 @@ def run_generation(req: GenerateRequest):
     )
 
     quality_attempts = 1
-    while score["score"] < req.quality_threshold and quality_attempts < 3:
-        candidate = router.generate(plan, variation=quality_attempts + repair_attempts)
+    self_repair_attempts = 0
+    while (
+        (score["score"] < req.quality_threshold or not critique.get("pass", False))
+        and quality_attempts < 3
+    ):
+        if not critique.get("pass", False):
+            self_repair_attempts += 1
+            plan = self_repair.apply(
+                plan,
+                critique,
+                attempt=self_repair_attempts,
+            )
+            plan = stem_arranger.apply(plan)
+            plan = conditioning_compiler.apply(plan)
+
+        candidate = router.generate(
+            plan,
+            variation=quality_attempts + repair_attempts + self_repair_attempts,
+        )
         if not candidate.get("audio_path") and not candidate.get("audio_url"):
             break
 
@@ -238,6 +257,7 @@ def run_generation(req: GenerateRequest):
             **generation,
             "attempts": quality_attempts,
             "repair_attempts": repair_attempts,
+            "self_repair_attempts": self_repair_attempts,
         },
         "analysis": analysis,
         "quality": score,
@@ -264,7 +284,7 @@ def process_job(job_id: str, req: GenerateRequest):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -285,6 +305,7 @@ def root():
             "mastering",
             "quality-check",
             "production-critic",
+            "closed-loop-self-repair",
             "stems",
         ],
     }
@@ -295,7 +316,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "generator": router.provider,
     }
 
