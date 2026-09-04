@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 
 from .jobs import jobs
+from .music_brain.batch import DatasetBatchIngestor
 from .music_brain.ingestion import MusicIngestionPipeline
 from .music_brain.rights import SampleRightsEngine
 from .music_brain.search import MusicBrainSearch
@@ -19,7 +20,7 @@ from .services.router import GenerationRouter
 from .services.section_repair import SectionRepairEngine
 from .services.stems import StemSeparator
 
-app = FastAPI(title="Just Maker AI Backend", version="0.5.0")
+app = FastAPI(title="Just Maker AI Backend", version="0.6.0")
 
 allowed_origins = [
     origin.strip()
@@ -49,6 +50,7 @@ analyzer = AudioAnalyzer()
 music_brain_search = MusicBrainSearch()
 music_ingestion = MusicIngestionPipeline()
 sample_rights = SampleRightsEngine()
+dataset_ingestor = DatasetBatchIngestor()
 
 
 class GenerateRequest(BaseModel):
@@ -82,6 +84,11 @@ class RightsCheckRequest(BaseModel):
     license_name: Optional[str] = None
     commercial_use: bool = False
     sampling_allowed: bool = False
+
+
+class MusicBrainzImportRequest(BaseModel):
+    query: str = Field(min_length=2)
+    max_records: int = Field(default=250, ge=1, le=5000)
 
 
 def run_generation(req: GenerateRequest):
@@ -204,7 +211,7 @@ def process_job(job_id: str, req: GenerateRequest):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "0.5.0",
+        "version": "0.6.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -260,6 +267,32 @@ def ingest_music_record(record: Dict[str, Any]):
 @app.post("/v1/music-brain/rights/check")
 def check_sample_rights(req: RightsCheckRequest):
     return sample_rights.evaluate(req.model_dump())
+
+
+@app.post("/v1/music-brain/import/musicbrainz")
+def import_musicbrainz(req: MusicBrainzImportRequest):
+    if not dataset_ingestor.pipeline.db.configured:
+        raise HTTPException(
+            status_code=503,
+            detail="JUST_MAKER_DATABASE_URL must be configured before persistent imports.",
+        )
+    return dataset_ingestor.ingest_musicbrainz_query(
+        query=req.query,
+        max_records=req.max_records,
+    )
+
+
+@app.get("/v1/music-brain/import/jobs/{job_id}")
+def get_music_import_job(job_id: str):
+    persistent = dataset_ingestor.database.get_ingestion_job(job_id)
+    if persistent:
+        return persistent
+
+    checkpoint = dataset_ingestor.checkpoints.load(job_id)
+    if checkpoint:
+        return checkpoint
+
+    raise HTTPException(status_code=404, detail="Import job not found")
 
 
 @app.post("/v1/render")
