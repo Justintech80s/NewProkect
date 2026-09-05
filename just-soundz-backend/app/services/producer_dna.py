@@ -53,6 +53,40 @@ class ProducerDNAEngine:
             "lofi_character": 0.86,
             "mix_polish": 0.46,
         },
+        "soul_chop_maximalist": {
+            "swing": 0.56,
+            "syncopation": 0.58,
+            "negative_space": 0.42,
+            "kick_density": 0.37,
+            "snare_density": 0.19,
+            "percussion_complexity": 0.55,
+            "bass_prominence": 0.73,
+            "harmonic_complexity": 0.78,
+            "sample_chop_intensity": 0.82,
+            "arrangement_density": 0.72,
+            "lofi_character": 0.42,
+            "mix_polish": 0.84,
+            "vocal_texture": 0.72,
+            "gospel_color": 0.68,
+            "orchestral_layering": 0.52,
+        },
+        "electro_minimalist": {
+            "swing": 0.50,
+            "syncopation": 0.62,
+            "negative_space": 0.80,
+            "kick_density": 0.31,
+            "snare_density": 0.16,
+            "percussion_complexity": 0.64,
+            "bass_prominence": 0.80,
+            "harmonic_complexity": 0.36,
+            "sample_chop_intensity": 0.20,
+            "arrangement_density": 0.40,
+            "lofi_character": 0.10,
+            "mix_polish": 0.91,
+            "vocal_texture": 0.35,
+            "gospel_color": 0.08,
+            "orchestral_layering": 0.12,
+        },
         "modern_minimal": {
             "swing": 0.51,
             "syncopation": 0.56,
@@ -88,6 +122,13 @@ class ProducerDNAEngine:
         profile["bpm"] = plan.get("bpm")
         profile["key"] = plan.get("key")
         profile["originality_policy"] = "broad-production-traits-only"
+        profile["identity_policy"] = {
+            "artist_voice_clone": False,
+            "melody_copy": False,
+            "recording_copy": False,
+            "copyrighted_sample_auto_use": False,
+            "named_reference_translated_to_traits": True,
+        }
         return profile
 
     def apply(self, prompt: str, plan: Dict[str, Any]) -> Dict[str, Any]:
@@ -97,6 +138,18 @@ class ProducerDNAEngine:
 
     def _select_archetype(self, prompt: str) -> str:
         p = prompt.lower()
+
+        # Named artist/producer references are translated into broad musical
+        # characteristics rather than direct identity/style cloning.
+        if any(term in p for term in [
+            "kanye", "chipmunk soul", "soul sample", "pitched soul",
+            "gospel hip hop", "maximalist hip hop", "orchestral hip hop"
+        ]):
+            if any(term in p for term in [
+                "yeezus", "industrial", "electronic minimal", "abrasive synth"
+            ]):
+                return "electro_minimalist"
+            return "soul_chop_maximalist"
 
         if any(term in p for term in [
             "west coast", "g-funk", "polished drums", "synth bass", "clean hip hop"
