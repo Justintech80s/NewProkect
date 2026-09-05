@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
+import os
 import tempfile
 from typing import Any, Dict
 
@@ -32,11 +33,12 @@ class RemoteWorkerProvider(MusicProvider):
             "conditioning": plan.get("conditioning") or {},
             "variation": variation,
         }
+        generation_timeout = float(os.getenv("JUST_MAKER_WORKER_TIMEOUT_SECONDS", "600"))
         response = httpx.post(
             f"{self.base_url}/generate",
             json=payload,
             headers=headers,
-            timeout=600,
+            timeout=generation_timeout,
         )
         response.raise_for_status()
         data = response.json()
@@ -45,10 +47,11 @@ class RemoteWorkerProvider(MusicProvider):
         artifact_filename = data.get("artifact_filename")
 
         if not audio_path and not audio_url and artifact_filename:
+            artifact_timeout = float(os.getenv("JUST_MAKER_ARTIFACT_TIMEOUT_SECONDS", "120"))
             artifact_response = httpx.get(
                 f"{self.base_url}/artifacts/{artifact_filename}",
                 headers=headers,
-                timeout=120,
+                timeout=artifact_timeout,
             )
             artifact_response.raise_for_status()
             suffix = Path(artifact_filename).suffix or ".wav"
