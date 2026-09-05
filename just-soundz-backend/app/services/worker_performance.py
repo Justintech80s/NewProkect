@@ -47,8 +47,12 @@ class WorkerPerformanceStore:
             for r in rows
         }
 
-    def routing_bonus(self, worker_name: str) -> Dict[str, Any]:
-        stats = self.summary().get(worker_name)
+    def routing_bonus(
+        self,
+        worker_name: str,
+        summaries: Dict[str, Dict[str, Any]] | None = None,
+    ) -> Dict[str, Any]:
+        stats = (summaries if summaries is not None else self.summary()).get(worker_name)
         if not stats or not stats.get("eligible"):
             return {
                 "bonus": 0.0,
