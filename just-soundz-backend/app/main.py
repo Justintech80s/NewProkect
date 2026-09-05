@@ -46,6 +46,7 @@ from .services.quality_cost_controller import QualityCostController
 from .services.readiness import ReadinessChecker
 from .services.reference_audio import ReferenceAudioAnalyzer
 from .services.reference_traits import ReferenceTraitBlender
+from .services.rust_dsp import RustDSP
 from .services.repetition import RepetitionDetector
 from .services.rhythm_transformer import RhythmTransformer
 from .services.router import GenerationRouter
@@ -59,7 +60,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="4.5.0")
+app = FastAPI(title="Just Maker AI Backend", version="4.6.0")
 
 allowed_origins = [
     origin.strip()
@@ -127,6 +128,7 @@ music_context_builder = MusicBrainContextBuilder(music_brain_search)
 usage_quota = UsageQuotaService()
 operations = OperationsMetrics()
 quality_cost_controller = QualityCostController(operations)
+rust_dsp = RustDSP()
 readiness = ReadinessChecker(
     database=music_brain_search.db,
     router=router,
@@ -748,7 +750,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "4.5.0",
+        "version": "4.6.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -792,6 +794,7 @@ def root():
             "distributed-cache-coherence",
             "rocksdb-cache-observability",
             "adaptive-rocksdb-ttl-tuning",
+            "rust-dsp-acceleration",
             "gpu-model-worker",
             "generation",
             "repetition-check",
@@ -826,7 +829,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "4.5.0",
+        "version": "4.6.0",
         "generator": router.provider,
     }
 
@@ -850,6 +853,21 @@ def ready():
     return status
 
 
+
+
+
+@app.get("/v1/dsp-status")
+def dsp_status(
+    authorization: Optional[str] = Header(default=None),
+):
+    require_user(authorization)
+    return {
+        "rust_dsp": rust_dsp.status(),
+        "mastering": mastering.dsp.status(),
+        "stem_mixer": stem_mixer.dsp.status(),
+        "fallback": "numpy",
+        "role": "performance-critical-audio-processing",
+    }
 
 
 @app.get("/v1/cache-status")
