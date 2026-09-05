@@ -8,6 +8,7 @@ from .graph import MusicGraph
 from .production_profiles import ProductionProfileStore
 from .relational_graph import RelationalMusicGraph
 from .rights import SampleRightsEngine
+from ..services.event_bus import KafkaEventBus
 
 
 class MusicIngestionPipeline:
@@ -20,6 +21,7 @@ class MusicIngestionPipeline:
         self.rights = SampleRightsEngine()
         self.relational_graph = RelationalMusicGraph(self.db)
         self.production_profiles = ProductionProfileStore(self.db)
+        self.event_bus = KafkaEventBus()
 
     def ingest(self, record: Dict[str, Any]) -> Dict[str, Any]:
         normalized = self._normalize(record)
@@ -52,6 +54,24 @@ class MusicIngestionPipeline:
             profile = self.production_profiles.infer(normalized)
 
         graph_result = self.graph.upsert_song_relationships(normalized)
+
+        if db_result.get("stored"):
+            self.event_bus.emit(
+                __import__("os").getenv(
+                    "JUST_MAKER_KAFKA_CACHE_TOPIC",
+                    "justmaker.cache",
+                ),
+                "cache.invalidate",
+                {
+                    "namespaces": ["music-brain-search"],
+                    "reason": "music_brain_ingest",
+                    "entity": {
+                        "song_id": db_result.get("id"),
+                        "external_id": normalized.get("external_id"),
+                    },
+                },
+                key=str(normalized.get("external_id") or db_result.get("id")),
+            )
 
         return {
             "record": normalized,
