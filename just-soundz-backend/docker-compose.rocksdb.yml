@@ -1,0 +1,21 @@
+services:
+  rocksdb-preflight:
+    image: python:3.12-slim
+    working_dir: /workspace
+    volumes:
+      - ./:/workspace
+      - just-maker-rocksdb:/var/lib/just-maker/rocksdb
+    environment:
+      JUST_MAKER_ROCKSDB_ENABLED: "1"
+      JUST_MAKER_ROCKSDB_PATH: /var/lib/just-maker/rocksdb
+      JUST_MAKER_ROCKSDB_TTL_SECONDS: "900"
+      JUST_MAKER_ROCKSDB_MIN_FREE_BYTES: "104857600"
+    command:
+      [
+        "sh",
+        "-lc",
+        "pip install -q -r requirements.txt -r requirements-rocksdb.txt && PYTHONPATH=. python -m app.rocksdb_preflight"
+      ]
+
+volumes:
+  just-maker-rocksdb:
