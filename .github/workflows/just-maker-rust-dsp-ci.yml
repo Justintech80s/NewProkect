@@ -1,0 +1,29 @@
+name: Just Maker Rust DSP CI
+
+on:
+  push:
+    paths:
+      - "just-soundz-backend/rust-dsp/**"
+      - "just-soundz-backend/app/services/rust_dsp.py"
+      - ".github/workflows/just-maker-rust-dsp-ci.yml"
+  pull_request:
+    paths:
+      - "just-soundz-backend/rust-dsp/**"
+      - "just-soundz-backend/app/services/rust_dsp.py"
+      - ".github/workflows/just-maker-rust-dsp-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  rust-dsp:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: just-soundz-backend/rust-dsp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check Rust DSP crate
+        run: cargo check --locked || cargo check
