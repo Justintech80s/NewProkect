@@ -1,0 +1,2 @@
+# Optional Phase 44 Rust DSP acceleration.
+maturin>=1.7,<2

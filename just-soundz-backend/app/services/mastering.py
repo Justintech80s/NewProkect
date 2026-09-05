@@ -7,9 +7,14 @@ from typing import Dict
 
 import numpy as np
 
+from .rust_dsp import RustDSP
+
 
 class MasteringEngine:
-    """Lightweight production mastering chain with no external DSP dependency."""
+    """Mastering chain with optional Rust acceleration and NumPy fallback."""
+
+    def __init__(self):
+        self.dsp = RustDSP()
 
     def process(
         self,
@@ -24,20 +29,18 @@ class MasteringEngine:
             return {"audio_path": audio_path, "mastered": False, "reason": "empty_audio"}
 
         # Remove DC offset per channel.
-        audio = audio - np.mean(audio, axis=0, keepdims=True)
+        audio = self.dsp.remove_dc(audio)
 
         # Gentle spectral cleanup and bus compression.
-        audio = self._high_pass(audio, sr, 25.0)
+        audio = self.dsp.high_pass(audio, sr, 25.0)
         pre_rms = float(np.sqrt(np.mean(audio * audio) + 1e-9))
         pre_rms_db = 20.0 * np.log10(pre_rms + 1e-9)
         makeup_db = max(-4.0, min(5.0, target_rms_db - pre_rms_db))
-        audio = audio * (10.0 ** (makeup_db / 20.0))
-        audio = np.tanh(audio * 1.22) / np.tanh(1.22)
+        audio = self.dsp.apply_gain_db(audio, makeup_db)
+        audio = self.dsp.soft_clip(audio, 1.22)
 
         # Peak normalization.
-        target_peak = 10.0 ** (target_peak_db / 20.0)
-        peak = float(np.max(np.abs(audio)) or 1.0)
-        audio = audio / peak * target_peak
+        audio = self.dsp.normalize_peak(audio, target_peak_db)
 
         # Short fade in/out prevents edge clicks.
         fade = min(int(sr * 0.02), len(audio) // 2)
@@ -65,6 +68,7 @@ class MasteringEngine:
             "target_rms_dbfs": target_rms_db,
             "makeup_gain_db": round(makeup_db, 2),
             "clipping_detected": bool(np.any(np.abs(audio) >= 0.999)),
+            "dsp": self.dsp.status(),
         }
 
     def _read_wav(self, path: Path):
