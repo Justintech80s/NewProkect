@@ -28,6 +28,7 @@ from .services.durable_jobs import DurableGenerationJobStore
 from .services.evaluation import GenerationEvaluator
 from .services.evaluation_store import EvaluationStore
 from .services.event_bus import KafkaEventBus
+from .services.kafka_runtime import KafkaRuntime
 from .services.job_recovery import JobRecoveryPlanner
 from .services.harmony_planner import HarmonyPlanner
 from .services.instrumentation_planner import InstrumentationPlanner
@@ -60,7 +61,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="4.6.0")
+app = FastAPI(title="Just Maker AI Backend", version="4.7.0")
 
 allowed_origins = [
     origin.strip()
@@ -89,6 +90,7 @@ durable_jobs = DurableGenerationJobStore()
 generation_evaluator = GenerationEvaluator()
 evaluation_store = EvaluationStore()
 event_bus = KafkaEventBus()
+kafka_runtime = KafkaRuntime()
 conditioning_compiler = ConditioningCompiler()
 candidate_ranker = CandidateRanker()
 cache_tuner = AdaptiveCacheTuner()
@@ -750,7 +752,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "4.6.0",
+        "version": "4.7.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -795,6 +797,8 @@ def root():
             "rocksdb-cache-observability",
             "adaptive-rocksdb-ttl-tuning",
             "rust-dsp-acceleration",
+            "kafka-runtime-health",
+            "kafka-topic-bootstrap",
             "gpu-model-worker",
             "generation",
             "repetition-check",
@@ -829,7 +833,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "4.6.0",
+        "version": "4.7.0",
         "generator": router.provider,
     }
 
@@ -910,6 +914,11 @@ def event_backbone_status(
             "JUST_MAKER_KAFKA_CACHE_TOPIC",
             "justmaker.cache",
         ),
+        "dead_letter_topic": os.getenv(
+            "JUST_MAKER_KAFKA_DLQ_TOPIC",
+            "justmaker.dead-letter",
+        ),
+        "runtime": kafka_runtime.health(),
         "rocksdb": {
             "enabled": False,
             "planned_role": "worker-side local cache",
