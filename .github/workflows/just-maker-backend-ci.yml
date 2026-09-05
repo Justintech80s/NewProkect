@@ -96,7 +96,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git grep -nE '(JUST_MAKER_SUPABASE_SERVICE_ROLE_KEY|JUST_MAKER_GPU_WORKER_TOKEN|JUST_SOUNDZ_PRIMARY_WORKER_TOKEN)=[^#[:space:]][^[:space:]]+' -- ':!just-soundz-backend/.env.example'; then
+          if git grep -nE '(JUST_MAKER_SUPABASE_SERVICE_ROLE_KEY|JUST_MAKER_GPU_WORKER_TOKEN|JUST_SOUNDZ_PRIMARY_WORKER_TOKEN)=[A-Za-z0-9_./+=-]{20,}' -- ':!just-soundz-backend/.env.example'; then
             echo "A private Just Maker secret appears to be committed."
             exit 1
           fi
