@@ -40,6 +40,7 @@ from .services.originality_guard import OriginalityGuard
 from .services.production_critic import ProductionCritic
 from .services.preferences import PreferenceLearningStore
 from .services.quality import QualityJudge
+from .services.quality_cost_controller import QualityCostController
 from .services.readiness import ReadinessChecker
 from .services.reference_audio import ReferenceAudioAnalyzer
 from .services.reference_traits import ReferenceTraitBlender
@@ -56,7 +57,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="3.7.0")
+app = FastAPI(title="Just Maker AI Backend", version="3.8.0")
 
 allowed_origins = [
     origin.strip()
@@ -121,6 +122,7 @@ dataset_ingestor = DatasetBatchIngestor()
 music_context_builder = MusicBrainContextBuilder(music_brain_search)
 usage_quota = UsageQuotaService()
 operations = OperationsMetrics()
+quality_cost_controller = QualityCostController(operations)
 readiness = ReadinessChecker(
     database=music_brain_search.db,
     router=router,
@@ -168,6 +170,7 @@ class GenerateRequest(BaseModel):
     variation: int = Field(default=0, ge=0, le=5)
     candidate_count: int = Field(default=1, ge=1, le=3)
     candidate_mode: str = Field(default="manual", pattern="^(manual|adaptive)$")
+    max_estimated_cost_usd: Optional[float] = Field(default=None, ge=0.0, le=100.0)
 
 
 class GenerateResponse(BaseModel):
@@ -491,6 +494,15 @@ def run_generation(req: GenerateRequest, user_id: str | None = None, _single_can
         mode=req.candidate_mode,
     )
 
+    cost_plan = quality_cost_controller.plan(
+        duration_seconds=req.duration_seconds,
+        candidate_count=budget["candidate_count"],
+        make_stems=req.make_stems,
+        max_estimated_cost_usd=req.max_estimated_cost_usd,
+    )
+    budget["candidate_count"] = cost_plan["candidate_count"]
+    budget["cost_plan"] = cost_plan
+
     if budget["candidate_count"] > 1 and not _single_candidate:
         candidates = []
         for offset in range(budget["candidate_count"]):
@@ -697,7 +709,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "3.7.0",
+        "version": "3.8.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -715,6 +727,7 @@ def root():
             "multi-variation-generation-control",
             "best-of-n-candidate-selection",
             "adaptive-candidate-compute-budget",
+            "quality-aware-cost-controller",
             "rhythm-transformer",
             "harmony-planner",
             "instrumentation-planner",
@@ -764,7 +777,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "3.7.0",
+        "version": "3.8.0",
         "generator": router.provider,
     }
 
