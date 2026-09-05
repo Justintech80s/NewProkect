@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any, Dict, List, Tuple
 
 from .capabilities import CapabilityRequirements
@@ -26,6 +27,7 @@ class WorkerSelector:
         global_summaries = self.performance.summary()
         routing_context = self.performance.context_key(plan)
         contextual_summaries = self.performance.summary(context=routing_context)
+        genre = str(plan.get("genre") or "").strip().lower()
 
         for worker in self.registry.workers():
             coverage = worker.capabilities.coverage(required)
@@ -46,11 +48,14 @@ class WorkerSelector:
                 + float(contextual_history.get("bonus") or 0.0) * 0.75,
             )
 
+            specialization_bonus = self._specialization_bonus(worker.name, genre)
+
             score = (
                 coverage * 0.80
                 + (0.15 if duration_ok else 0.0)
                 + max(0.0, 0.05 - worker.priority / 10000.0)
                 + historical_bonus
+                + specialization_bonus
                 - built_in_penalty
             )
 
@@ -60,6 +65,7 @@ class WorkerSelector:
                 "duration_ok": duration_ok,
                 "required_capabilities": required,
                 "historical_bonus": round(historical_bonus, 4),
+                "specialization_bonus": round(specialization_bonus, 4),
                 "global_performance": global_history.get("history", {}),
                 "contextual_performance": contextual_history.get("history", {}),
                 "routing_context": routing_context,
@@ -72,3 +78,15 @@ class WorkerSelector:
 
         ranked.sort(key=lambda item: item[1]["score"], reverse=True)
         return ranked
+
+    def _specialization_bonus(self, worker_name: str, genre: str) -> float:
+        if not genre:
+            return 0.0
+        key = worker_name.upper().replace("-", "_")
+        raw = os.getenv(f"JUST_MAKER_{key}_GENRES", "")
+        genres = {
+            value.strip().lower()
+            for value in raw.split(",")
+            if value.strip()
+        }
+        return 0.08 if genre in genres else 0.0

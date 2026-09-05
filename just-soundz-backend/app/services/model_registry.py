@@ -58,6 +58,7 @@ class ModelRegistry:
             ("musicgen-jasco", "musicgen-jasco-worker", "JUST_SOUNDZ_MUSICGEN_WORKER_URL", "JUST_SOUNDZ_MUSICGEN_WORKER_TOKEN", 20),
             ("stable-audio", "stable-audio-worker", "JUST_SOUNDZ_STABLE_WORKER_URL", "JUST_SOUNDZ_STABLE_WORKER_TOKEN", 30),
         ]
+        specs.extend(self._ensemble_specs())
 
         for name, kind, url_key, token_key, priority in specs:
             url = os.getenv(url_key)
@@ -74,6 +75,34 @@ class ModelRegistry:
             ))
 
         return sorted(workers, key=lambda w: w.priority)
+
+    def _ensemble_specs(self):
+        """Adds arbitrary licensed GPU/model workers without code changes.
+
+        Format:
+        name|kind|url_env|token_env|priority;...
+        """
+        raw = os.getenv("JUST_MAKER_ENSEMBLE_WORKERS", "").strip()
+        specs = []
+        if not raw:
+            return specs
+        for item in raw.split(";"):
+            parts = [part.strip() for part in item.split("|")]
+            if len(parts) != 5:
+                continue
+            name, kind, url_key, token_key, priority = parts
+            if kind not in {
+                "http-worker",
+                "musicgen-jasco-worker",
+                "stable-audio-worker",
+            }:
+                continue
+            try:
+                priority_value = int(priority)
+            except ValueError:
+                continue
+            specs.append((name, kind, url_key, token_key, priority_value))
+        return specs
 
     def _capabilities_from_env(self, name: str, kind: str) -> WorkerCapabilities:
         prefix = name.upper().replace("-", "_")
