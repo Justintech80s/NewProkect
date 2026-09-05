@@ -1,0 +1,2 @@
+# Optional local RocksDB cache for the GPU worker.
+rocksdict>=0.3,<1

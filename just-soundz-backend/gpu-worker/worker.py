@@ -25,6 +25,11 @@ class GPUWorker:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.compiler = ConditioningPromptCompiler()
         self._adapter = None
+        try:
+            from local_cache import RocksLocalCache
+            self.cache = RocksLocalCache("gpu-worker")
+        except Exception:
+            self.cache = None
 
     def status(self) -> Dict[str, Any]:
         return {
@@ -34,6 +39,10 @@ class GPUWorker:
             "configured": bool(self.model_id),
             "loaded": self._adapter is not None,
             "max_seconds": self.max_seconds,
+            "cache": self.cache.status() if self.cache else {
+                "enabled": False,
+                "available": False,
+            },
         }
 
     def capabilities(self) -> Dict[str, Any]:
@@ -65,7 +74,25 @@ class GPUWorker:
             int(plan.get("duration_seconds") or 120),
             self.max_seconds,
         )
-        prompt = self.compiler.compile(plan, conditioning, variation)
+        prompt_cache_key = None
+        prompt = None
+        if self.cache:
+            prompt_cache_key = self.cache.make_key(
+                "compiled-prompt",
+                {
+                    "plan": plan,
+                    "conditioning": conditioning,
+                    "variation": variation,
+                    "model_id": self.model_id,
+                    "backend": self.backend,
+                },
+            )
+            prompt = self.cache.get(prompt_cache_key)
+
+        if prompt is None:
+            prompt = self.compiler.compile(plan, conditioning, variation)
+            if self.cache and prompt_cache_key:
+                self.cache.set(prompt_cache_key, prompt, ttl_seconds=3600)
         controls = conditioning.get("advanced_controls") or {}
         adapter = self._get_adapter()
 
@@ -97,6 +124,10 @@ class GPUWorker:
                 "conditioning_prompt": prompt,
                 "advanced_controls": controls,
                 "variation": variation,
+                "cache": self.cache.status() if self.cache else {
+                    "enabled": False,
+                    "available": False,
+                },
             },
         }
 
