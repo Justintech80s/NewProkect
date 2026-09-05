@@ -64,6 +64,9 @@ class AdvancedConditioningPlanner:
                 "negative_space": float(dna.get("negative_space", 0.5)),
                 "bass_prominence": float(dna.get("bass_prominence", 0.75)),
                 "mix_polish": float(dna.get("mix_polish", 0.8)),
+                "brightness": float(dna.get("brightness", 0.5)),
+                "transient_punch": float(dna.get("transient_punch", 0.5)),
+                "dynamic_range": float(dna.get("dynamic_range", 0.5)),
             },
             "originality": {
                 "direct_melodic_copying": False,
