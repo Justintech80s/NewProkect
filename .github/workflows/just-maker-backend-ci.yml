@@ -47,7 +47,7 @@ jobs:
       - name: Run backend tests
         env:
           PYTHONPATH: .
-        run: pytest -q
+        run: pytest -q tests
 
       - name: Run API smoke tests
         env:
