@@ -20,6 +20,7 @@ from .services.artifact_delivery import SecureArtifactDelivery
 from .services.auth import SupabaseUserAuth
 from .services.arranger import ArrangementEngine
 from .services.conditioning import ConditioningCompiler
+from .services.creative_memory import CreativeMemoryStore
 from .services.durable_jobs import DurableGenerationJobStore
 from .services.evaluation import GenerationEvaluator
 from .services.evaluation_store import EvaluationStore
@@ -52,7 +53,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="3.2.0")
+app = FastAPI(title="Just Maker AI Backend", version="3.3.0")
 
 allowed_origins = [
     origin.strip()
@@ -81,6 +82,7 @@ durable_jobs = DurableGenerationJobStore()
 generation_evaluator = GenerationEvaluator()
 evaluation_store = EvaluationStore()
 conditioning_compiler = ConditioningCompiler()
+creative_memory = CreativeMemoryStore()
 production_critic = ProductionCritic()
 preferences = PreferenceLearningStore()
 stem_arranger = StemArranger()
@@ -273,6 +275,7 @@ def run_generation(req: GenerateRequest, user_id: str | None = None):
 
     plan = originality_guard.apply(plan)
     plan = preferences.apply_to_plan(user_id, plan)
+    plan = creative_memory.apply(user_id, plan)
     plan = rhythm_transformer.apply(plan)
     plan = harmony_planner.apply(plan)
     plan = instrumentation_planner.apply(plan)
@@ -579,6 +582,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
             artifacts=artifacts,
         )
         evaluation_store.save(job_id, user_id, result["evaluation"])
+        creative_memory.remember(user_id, job_id, result)
         operations.record(
             "generation_job",
             request_id=request_id,
@@ -645,7 +649,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "3.2.0",
+        "version": "3.3.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -658,6 +662,7 @@ def root():
             "reference-trait-blending",
             "originality-guard",
             "adaptive-preference-learning",
+            "successful-generation-creative-memory",
             "rhythm-transformer",
             "harmony-planner",
             "instrumentation-planner",
@@ -707,7 +712,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "3.2.0",
+        "version": "3.3.0",
         "generator": router.provider,
     }
 
@@ -749,6 +754,19 @@ def current_user(authorization: Optional[str] = Header(default=None)):
     return require_user(authorization)
 
 
+
+
+
+@app.get("/v1/creative-memory")
+def get_creative_memory(
+    limit: int = 5,
+    authorization: Optional[str] = Header(default=None),
+):
+    user = require_user(authorization)
+    return {
+        "memories": creative_memory.best(user["id"], limit=limit),
+        "policy": "broad-successful-production-recipes-only",
+    }
 
 
 @app.get("/v1/preferences")
