@@ -7,3 +7,5 @@ sentencepiece>=0.2.0
 numpy>=2.0.0
 soundfile>=0.13.1
 safetensors>=0.5.0
+
+confluent-kafka==2.11.1
