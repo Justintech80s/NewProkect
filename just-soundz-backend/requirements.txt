@@ -17,3 +17,6 @@ pytest==8.4.1
 # Just Maker Music Brain persistence/graph adapters
 psycopg[binary]==3.2.9
 neo4j==5.28.2
+
+# Kafka event backbone
+confluent-kafka>=2.6,<3

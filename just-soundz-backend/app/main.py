@@ -26,6 +26,7 @@ from .services.creative_memory import CreativeMemoryStore
 from .services.durable_jobs import DurableGenerationJobStore
 from .services.evaluation import GenerationEvaluator
 from .services.evaluation_store import EvaluationStore
+from .services.event_bus import KafkaEventBus
 from .services.job_recovery import JobRecoveryPlanner
 from .services.harmony_planner import HarmonyPlanner
 from .services.instrumentation_planner import InstrumentationPlanner
@@ -57,7 +58,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="4.0.0")
+app = FastAPI(title="Just Maker AI Backend", version="4.1.0")
 
 allowed_origins = [
     origin.strip()
@@ -85,6 +86,7 @@ job_recovery = JobRecoveryPlanner()
 durable_jobs = DurableGenerationJobStore()
 generation_evaluator = GenerationEvaluator()
 evaluation_store = EvaluationStore()
+event_bus = KafkaEventBus()
 conditioning_compiler = ConditioningCompiler()
 candidate_ranker = CandidateRanker()
 candidate_budget = CandidateBudgetPlanner()
@@ -557,6 +559,18 @@ def run_generation(req: GenerateRequest, user_id: str | None = None, _single_can
 
 def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
     jobs.update(job_id, status="running")
+    event_bus.emit(
+        os.getenv("JUST_MAKER_KAFKA_JOB_TOPIC", "justmaker.jobs"),
+        "generation.started",
+        {
+            "job_id": job_id,
+            "user_id": user_id,
+            "duration_seconds": req.duration_seconds,
+            "candidate_count": req.candidate_count,
+            "make_stems": req.make_stems,
+        },
+        key=job_id,
+    )
     request_id = str(uuid.uuid4())
     job_started = time.perf_counter()
     if user_id:
@@ -656,6 +670,19 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
                 "evaluation_score": (result.get("evaluation") or {}).get("score"),
             },
         )
+        event_bus.emit(
+            os.getenv("JUST_MAKER_KAFKA_JOB_TOPIC", "justmaker.jobs"),
+            "generation.completed",
+            {
+                "job_id": job_id,
+                "user_id": user_id,
+                "provider": (result.get("generation") or {}).get("provider"),
+                "evaluation_score": (result.get("evaluation") or {}).get("score"),
+                "artifact_count": len(result.get("artifacts") or []),
+                "estimated_cost_usd": (result.get("operations") or {}).get("estimated_cost_usd"),
+            },
+            key=job_id,
+        )
         jobs.update(job_id, status="complete", result=result)
         if user_id:
             usage_quota.record_event(
@@ -675,6 +702,16 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
             result=result,
         )
     except Exception as exc:
+        event_bus.emit(
+            os.getenv("JUST_MAKER_KAFKA_JOB_TOPIC", "justmaker.jobs"),
+            "generation.failed",
+            {
+                "job_id": job_id,
+                "user_id": user_id,
+                "error_type": exc.__class__.__name__,
+            },
+            key=job_id,
+        )
         try:
             operations.record(
                 "generation_job",
@@ -709,7 +746,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "4.0.0",
+        "version": "4.1.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -745,6 +782,9 @@ def root():
             "capability-aware-worker-selection",
             "evaluation-driven-worker-routing",
             "contextual-worker-specialization-learning",
+            "postgres-transactional-outbox",
+            "kafka-event-backbone",
+            "gpu-worker-event-consumer-ready",
             "gpu-model-worker",
             "generation",
             "repetition-check",
@@ -779,7 +819,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "4.0.0",
+        "version": "4.1.0",
         "generator": router.provider,
     }
 
@@ -801,6 +841,31 @@ def ready():
     if not status["ready"]:
         raise HTTPException(status_code=503, detail=status)
     return status
+
+
+
+@app.get("/v1/event-backbone")
+def event_backbone_status(
+    authorization: Optional[str] = Header(default=None),
+):
+    require_user(authorization)
+    return {
+        "postgres_outbox_configured": event_bus.outbox.configured,
+        "kafka_configured": event_bus.configured,
+        "job_topic": os.getenv("JUST_MAKER_KAFKA_JOB_TOPIC", "justmaker.jobs"),
+        "gpu_request_topic": os.getenv(
+            "JUST_MAKER_KAFKA_GPU_REQUEST_TOPIC",
+            "justmaker.gpu.requests",
+        ),
+        "gpu_result_topic": os.getenv(
+            "JUST_MAKER_KAFKA_GPU_RESULT_TOPIC",
+            "justmaker.gpu.results",
+        ),
+        "rocksdb": {
+            "enabled": False,
+            "planned_role": "worker-side local cache",
+        },
+    }
 
 
 @app.get("/v1/operations")
@@ -1021,6 +1086,16 @@ def create_job(
         "generation_queued",
         job_id=job_id,
         metadata={"duration_seconds": req.duration_seconds},
+    )
+    event_bus.emit(
+        os.getenv("JUST_MAKER_KAFKA_JOB_TOPIC", "justmaker.jobs"),
+        "generation.queued",
+        {
+            "job_id": job_id,
+            "user_id": user["id"],
+            "request": req.model_dump(),
+        },
+        key=job_id,
     )
     background_tasks.add_task(process_job, job_id, req, user["id"])
     return {
