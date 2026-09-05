@@ -62,7 +62,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="4.8.0")
+app = FastAPI(title="Just Maker AI Backend", version="4.9.0")
 
 allowed_origins = [
     origin.strip()
@@ -754,7 +754,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "4.8.0",
+        "version": "4.9.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -803,6 +803,8 @@ def root():
             "kafka-topic-bootstrap",
             "rocksdb-runtime-preflight",
             "persistent-worker-cache-storage",
+            "multi-model-gpu-ensemble",
+            "genre-specialized-model-routing",
             "gpu-model-worker",
             "generation",
             "repetition-check",
@@ -837,7 +839,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "4.8.0",
+        "version": "4.9.0",
         "generator": router.provider,
     }
 
