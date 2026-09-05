@@ -32,9 +32,12 @@ from .services.mix_intelligence import MixIntelligence
 from .services.producer import ProducerPlanner
 from .services.producer_dna import ProducerDNAEngine
 from .services.operations import OperationsMetrics, Stopwatch
+from .services.originality_guard import OriginalityGuard
 from .services.production_critic import ProductionCritic
 from .services.quality import QualityJudge
 from .services.readiness import ReadinessChecker
+from .services.reference_audio import ReferenceAudioAnalyzer
+from .services.reference_traits import ReferenceTraitBlender
 from .services.repetition import RepetitionDetector
 from .services.rhythm_transformer import RhythmTransformer
 from .services.router import GenerationRouter
@@ -48,7 +51,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="3.0.0")
+app = FastAPI(title="Just Maker AI Backend", version="3.1.0")
 
 allowed_origins = [
     origin.strip()
@@ -82,6 +85,9 @@ stem_arranger = StemArranger()
 professional_stems = ProfessionalStemGenerator()
 stem_mixer = StemMixer()
 producer_dna = ProducerDNAEngine()
+reference_audio_analyzer = ReferenceAudioAnalyzer()
+reference_trait_blender = ReferenceTraitBlender()
+originality_guard = OriginalityGuard()
 rhythm_transformer = RhythmTransformer()
 harmony_planner = HarmonyPlanner()
 instrumentation_planner = InstrumentationPlanner()
@@ -148,6 +154,7 @@ class GenerateRequest(BaseModel):
     key: Optional[str] = None
     make_stems: bool = True
     quality_threshold: float = Field(default=0.72, ge=0.0, le=1.0)
+    reference_traits: Optional[Dict[str, float]] = None
 
 
 class GenerateResponse(BaseModel):
@@ -231,6 +238,32 @@ def run_generation(req: GenerateRequest):
         user_key_supplied=req.key is not None,
     )
     plan = producer_dna.apply(req.prompt, plan)
+
+    if req.reference_traits:
+        allowed_reference_traits = {
+            "brightness",
+            "low_end_weight",
+            "rhythmic_density",
+            "transient_punch",
+            "dynamic_range",
+            "mix_polish_hint",
+        }
+        cleaned_traits = {
+            key: max(0.0, min(1.0, float(value)))
+            for key, value in req.reference_traits.items()
+            if key in allowed_reference_traits
+        }
+        plan["reference_audio"] = {
+            "production_traits": cleaned_traits,
+            "policy": {
+                "melody_extracted": False,
+                "note_sequence_stored": False,
+                "production_traits_only": True,
+            },
+        }
+        plan = reference_trait_blender.apply(plan)
+
+    plan = originality_guard.apply(plan)
     plan = rhythm_transformer.apply(plan)
     plan = harmony_planner.apply(plan)
     plan = instrumentation_planner.apply(plan)
@@ -603,7 +636,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "3.0.0",
+        "version": "3.1.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -612,6 +645,9 @@ def root():
             "relational-music-graph",
             "producer",
             "producer-dna",
+            "reference-audio-intelligence",
+            "reference-trait-blending",
+            "originality-guard",
             "rhythm-transformer",
             "harmony-planner",
             "instrumentation-planner",
@@ -661,7 +697,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "3.0.0",
+        "version": "3.1.0",
         "generator": router.provider,
     }
 
