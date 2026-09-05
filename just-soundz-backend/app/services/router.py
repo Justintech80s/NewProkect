@@ -68,6 +68,10 @@ class GenerationRouter:
                         "selected_kind": worker.kind,
                         "coverage": ranking.get("coverage"),
                         "score": ranking.get("score"),
+                        "routing_context": ranking.get("routing_context"),
+                        "historical_bonus": ranking.get("historical_bonus"),
+                        "global_performance": ranking.get("global_performance"),
+                        "contextual_performance": ranking.get("contextual_performance"),
                         "attempts": attempts,
                     }
                     return result

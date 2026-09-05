@@ -15,7 +15,7 @@ class WorkerPerformanceStore:
     def configured(self) -> bool:
         return bool(self.database_url)
 
-    def summary(self) -> Dict[str, Dict[str, Any]]:
+    def summary(self, context: str | None = None) -> Dict[str, Dict[str, Any]]:
         if not self.configured:
             return {}
 
@@ -23,18 +23,34 @@ class WorkerPerformanceStore:
 
         with psycopg.connect(self.database_url) as conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT
-                        routing->>'selected_worker' AS worker,
-                        count(*)::int AS evaluations,
-                        avg(overall_score)::float AS average_score,
-                        avg(CASE WHEN passed THEN 1.0 ELSE 0.0 END)::float AS pass_rate
-                    FROM generation_evaluations
-                    WHERE routing->>'selected_worker' IS NOT NULL
-                    GROUP BY routing->>'selected_worker'
-                    """
-                )
+                if context:
+                    cur.execute(
+                        """
+                        SELECT
+                            routing->>'selected_worker' AS worker,
+                            count(*)::int AS evaluations,
+                            avg(overall_score)::float AS average_score,
+                            avg(CASE WHEN passed THEN 1.0 ELSE 0.0 END)::float AS pass_rate
+                        FROM generation_evaluations
+                        WHERE routing->>'selected_worker' IS NOT NULL
+                          AND routing->>'routing_context'=%s
+                        GROUP BY routing->>'selected_worker'
+                        """,
+                        (context,),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        SELECT
+                            routing->>'selected_worker' AS worker,
+                            count(*)::int AS evaluations,
+                            avg(overall_score)::float AS average_score,
+                            avg(CASE WHEN passed THEN 1.0 ELSE 0.0 END)::float AS pass_rate
+                        FROM generation_evaluations
+                        WHERE routing->>'selected_worker' IS NOT NULL
+                        GROUP BY routing->>'selected_worker'
+                        """
+                    )
                 rows = cur.fetchall()
 
         return {
@@ -74,3 +90,14 @@ class WorkerPerformanceStore:
             "history": stats,
             "reason": "historical_quality",
         }
+
+
+    def context_key(self, plan: Dict[str, Any]) -> str:
+        context = plan.get("production_context") or {}
+        genres = context.get("genres") or []
+        genre = str(genres[0]).lower().strip() if genres else "general"
+        duration = int(plan.get("duration_seconds") or 0)
+        duration_band = "short" if duration <= 90 else "medium" if duration <= 240 else "long"
+        conditioning = plan.get("conditioning") or {}
+        stems = "stems" if conditioning.get("stems") else "mix"
+        return f"{genre}:{duration_band}:{stems}"
