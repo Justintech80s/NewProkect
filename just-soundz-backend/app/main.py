@@ -20,6 +20,7 @@ from .services.artifact_delivery import SecureArtifactDelivery
 from .services.auth import SupabaseUserAuth
 from .services.arranger import ArrangementEngine
 from .services.conditioning import ConditioningCompiler
+from .services.candidate_ranker import CandidateRanker
 from .services.creative_memory import CreativeMemoryStore
 from .services.durable_jobs import DurableGenerationJobStore
 from .services.evaluation import GenerationEvaluator
@@ -54,7 +55,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="3.5.0")
+app = FastAPI(title="Just Maker AI Backend", version="3.6.0")
 
 allowed_origins = [
     origin.strip()
@@ -83,6 +84,7 @@ durable_jobs = DurableGenerationJobStore()
 generation_evaluator = GenerationEvaluator()
 evaluation_store = EvaluationStore()
 conditioning_compiler = ConditioningCompiler()
+candidate_ranker = CandidateRanker()
 creative_memory = CreativeMemoryStore()
 production_critic = ProductionCritic()
 preferences = PreferenceLearningStore()
@@ -162,6 +164,7 @@ class GenerateRequest(BaseModel):
     quality_threshold: float = Field(default=0.72, ge=0.0, le=1.0)
     reference_traits: Optional[Dict[str, float]] = None
     variation: int = Field(default=0, ge=0, le=5)
+    candidate_count: int = Field(default=1, ge=1, le=3)
 
 
 class GenerateResponse(BaseModel):
@@ -235,7 +238,7 @@ def generate_professional_stem_mix(plan: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def run_generation(req: GenerateRequest, user_id: str | None = None):
+def run_generation(req: GenerateRequest, user_id: str | None = None, _single_candidate: bool = False):
     music_context = music_context_builder.build(req.prompt)
 
     plan = planner.build_plan(
@@ -473,6 +476,34 @@ def run_generation(req: GenerateRequest, user_id: str | None = None):
         artifacts=[],
     )
 
+    # Best-of-N mode generates a small candidate set, evaluates each through the
+    # same full pipeline, then returns the strongest result. Recursive candidates
+    # are forced to single-candidate mode to avoid nested fan-out.
+    if req.candidate_count > 1 and not _single_candidate:
+        candidates = []
+        for offset in range(req.candidate_count):
+            candidate_payload = req.model_dump()
+            candidate_payload["candidate_count"] = 1
+            candidate_payload["variation"] = (req.variation + offset) % 6
+            candidate_req = GenerateRequest(**candidate_payload)
+            candidate = run_generation(
+                candidate_req,
+                user_id=user_id,
+                _single_candidate=True,
+            )
+            candidate["variation"] = candidate_req.variation
+            candidates.append(candidate)
+
+        ranked = candidate_ranker.rank(candidates)
+        winner = dict(ranked[0]["candidate"])
+        winner["candidate_selection"] = {
+            "mode": "best-of-n",
+            "candidate_count": len(candidates),
+            "selected_variation": ranked[0]["variation"],
+            "ranking": candidate_ranker.summary(ranked),
+        }
+        return winner
+
     return {
         "plan": plan,
         "generation": {
@@ -653,7 +684,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "3.5.0",
+        "version": "3.6.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -669,6 +700,7 @@ def root():
             "successful-generation-creative-memory",
             "controlled-novelty-engine",
             "multi-variation-generation-control",
+            "best-of-n-candidate-selection",
             "rhythm-transformer",
             "harmony-planner",
             "instrumentation-planner",
@@ -718,7 +750,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "3.5.0",
+        "version": "3.6.0",
         "generator": router.provider,
     }
 
