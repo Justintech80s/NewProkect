@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from .circuit_breaker import WorkerCircuitBreaker
 from .model_registry import WorkerConfig
 from .procedural import ProceduralMusicProvider
 from .providers import (
@@ -17,6 +18,7 @@ class GenerationRouter:
 
     def __init__(self):
         self.selector = WorkerSelector()
+        self.circuit_breaker = WorkerCircuitBreaker()
 
     @property
     def provider(self) -> str:
@@ -29,6 +31,15 @@ class GenerationRouter:
         attempts: List[Dict[str, Any]] = []
 
         for worker, ranking in self.selector.rank(plan):
+            if not self.circuit_breaker.allow(worker.name):
+                attempts.append({
+                    "worker": worker.name,
+                    "status": "skipped",
+                    "reason": "circuit_open",
+                    **ranking,
+                })
+                continue
+
             if not ranking.get("duration_ok"):
                 attempts.append({
                     "worker": worker.name,
@@ -51,6 +62,7 @@ class GenerationRouter:
             try:
                 result = provider.generate(plan, variation)
                 if result.get("audio_path") or result.get("audio_url"):
+                    self.circuit_breaker.success(worker.name)
                     result["routing"] = {
                         "selected_worker": worker.name,
                         "selected_kind": worker.kind,
@@ -60,6 +72,7 @@ class GenerationRouter:
                     }
                     return result
 
+                self.circuit_breaker.failure(worker.name)
                 attempts.append({
                     "worker": worker.name,
                     "status": "failed",
@@ -67,6 +80,7 @@ class GenerationRouter:
                     **ranking,
                 })
             except Exception as exc:
+                self.circuit_breaker.failure(worker.name)
                 attempts.append({
                     "worker": worker.name,
                     "status": "failed",
@@ -96,7 +110,10 @@ class GenerationRouter:
                     **worker.public_dict(),
                     "ranking": ranking,
                 })
-        return {"workers": workers}
+        return {
+            "workers": workers,
+            "circuits": self.circuit_breaker.status(),
+        }
 
     def _provider_for(self, worker: WorkerConfig):
         if worker.kind == "built-in-procedural":

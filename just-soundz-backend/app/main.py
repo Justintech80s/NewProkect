@@ -1,5 +1,7 @@
 import os
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
+import time
+import uuid
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -29,8 +31,10 @@ from .services.mastering_critic import MasteringCritic
 from .services.mix_intelligence import MixIntelligence
 from .services.producer import ProducerPlanner
 from .services.producer_dna import ProducerDNAEngine
+from .services.operations import OperationsMetrics, Stopwatch
 from .services.production_critic import ProductionCritic
 from .services.quality import QualityJudge
+from .services.readiness import ReadinessChecker
 from .services.repetition import RepetitionDetector
 from .services.rhythm_transformer import RhythmTransformer
 from .services.router import GenerationRouter
@@ -44,7 +48,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="2.3.0")
+app = FastAPI(title="Just Maker AI Backend", version="3.0.0")
 
 allowed_origins = [
     origin.strip()
@@ -100,6 +104,41 @@ sample_rights = SampleRightsEngine()
 dataset_ingestor = DatasetBatchIngestor()
 music_context_builder = MusicBrainContextBuilder(music_brain_search)
 usage_quota = UsageQuotaService()
+operations = OperationsMetrics()
+readiness = ReadinessChecker(
+    database=music_brain_search.db,
+    router=router,
+    artifact_store=artifact_store,
+    user_auth=user_auth,
+)
+
+
+
+@app.middleware("http")
+async def request_observability(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+        success = response.status_code < 500
+        return response
+    finally:
+        latency_ms = (time.perf_counter() - started) * 1000.0
+        try:
+            operations.record(
+                "http_request",
+                request_id=request_id,
+                latency_ms=latency_ms,
+                success=success if "success" in locals() else False,
+                metadata={
+                    "method": request.method,
+                    "path": request.url.path,
+                },
+            )
+        except Exception:
+            pass
+        if "response" in locals():
+            response.headers["X-Request-ID"] = request_id
 
 
 class GenerateRequest(BaseModel):
@@ -413,6 +452,8 @@ def run_generation(req: GenerateRequest):
 
 def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
     jobs.update(job_id, status="running")
+    request_id = str(uuid.uuid4())
+    job_started = time.perf_counter()
     if user_id:
         usage_quota.record_event(
             user_id,
@@ -475,6 +516,16 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
                 pass
 
         result["artifacts"] = artifacts
+        generation_meta = result.get("generation") or {}
+        estimated_cost = operations.estimate_generation_cost(
+            req.duration_seconds,
+            attempts=int(generation_meta.get("attempts") or 1),
+            stem_count=max(1, len((result.get("stems") or {}).get("generated", [])) or 1),
+        )
+        result["operations"] = {
+            "request_id": request_id,
+            "estimated_cost_usd": estimated_cost,
+        }
         result["evaluation"] = generation_evaluator.evaluate(
             plan=result.get("plan") or {},
             generation=result.get("generation") or {},
@@ -486,6 +537,19 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
             artifacts=artifacts,
         )
         evaluation_store.save(job_id, user_id, result["evaluation"])
+        operations.record(
+            "generation_job",
+            request_id=request_id,
+            job_id=job_id,
+            provider=(result.get("generation") or {}).get("provider"),
+            latency_ms=(time.perf_counter() - job_started) * 1000.0,
+            success=True,
+            estimated_cost_usd=result["operations"]["estimated_cost_usd"],
+            metadata={
+                "duration_seconds": req.duration_seconds,
+                "evaluation_score": (result.get("evaluation") or {}).get("score"),
+            },
+        )
         jobs.update(job_id, status="complete", result=result)
         if user_id:
             usage_quota.record_event(
@@ -505,6 +569,20 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
             result=result,
         )
     except Exception as exc:
+        try:
+            operations.record(
+                "generation_job",
+                request_id=request_id,
+                job_id=job_id,
+                latency_ms=(time.perf_counter() - job_started) * 1000.0,
+                success=False,
+                metadata={
+                    "duration_seconds": req.duration_seconds,
+                    "error_type": exc.__class__.__name__,
+                },
+            )
+        except Exception:
+            pass
         jobs.update(job_id, status="failed", error=str(exc))
         if user_id:
             usage_quota.record_event(
@@ -525,7 +603,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "2.3.0",
+        "version": "3.0.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -558,6 +636,10 @@ def root():
             "production-critic",
             "automated-evaluation",
             "provider-benchmarking",
+            "structured-operational-metrics",
+            "worker-circuit-breakers",
+            "readiness-checks",
+            "cost-estimation",
             "closed-loop-self-repair",
             "stems",
             "durable-job-state",
@@ -579,7 +661,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "2.3.0",
+        "version": "3.0.0",
         "generator": router.provider,
     }
 
@@ -592,6 +674,28 @@ def require_user(authorization: Optional[str]) -> Dict[str, Any]:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+
+@app.get("/ready")
+def ready():
+    status = readiness.check()
+    if not status["ready"]:
+        raise HTTPException(status_code=503, detail=status)
+    return status
+
+
+@app.get("/v1/operations")
+def operations_status(
+    hours: int = 24,
+    authorization: Optional[str] = Header(default=None),
+):
+    require_user(authorization)
+    return {
+        "readiness": readiness.check(),
+        "metrics": operations.summary(max(1, min(hours, 168))),
+        "worker_status": router.status(),
+    }
 
 
 @app.get("/v1/me")
