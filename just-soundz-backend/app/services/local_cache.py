@@ -26,6 +26,14 @@ class RocksLocalCache:
         self.default_ttl = int(os.getenv("JUST_MAKER_ROCKSDB_TTL_SECONDS", "900"))
         self._db = None
         self._available = None
+        self._metrics = {
+            "hits": 0,
+            "misses": 0,
+            "writes": 0,
+            "deletes": 0,
+            "invalidated": 0,
+            "errors": 0,
+        }
 
     @property
     def available(self) -> bool:
@@ -48,15 +56,23 @@ class RocksLocalCache:
             "path": str(self.root / self.namespace),
             "default_ttl_seconds": self.default_ttl,
             "authoritative_store": "supabase-postgres",
+            "metrics": self.metrics(),
         }
 
     def get(self, key: str) -> Any | None:
         if not self.available:
+            self._metrics["misses"] += 1
             return None
 
-        db = self._get_db()
-        raw = db.get(self._key(key))
+        try:
+            db = self._get_db()
+            raw = db.get(self._key(key))
+        except Exception:
+            self._metrics["errors"] += 1
+            self._metrics["misses"] += 1
+            return None
         if raw is None:
+            self._metrics["misses"] += 1
             return None
 
         try:
@@ -68,8 +84,10 @@ class RocksLocalCache:
         expires_at = record.get("expires_at")
         if expires_at is not None and float(expires_at) <= time.time():
             self.delete(key)
+            self._metrics["misses"] += 1
             return None
 
+        self._metrics["hits"] += 1
         return record.get("value")
 
     def set(
@@ -87,13 +105,18 @@ class RocksLocalCache:
             "stored_at": time.time(),
             "expires_at": None if ttl <= 0 else time.time() + ttl,
         }
-        self._get_db()[self._key(key)] = json.dumps(
-            record,
-            separators=(",", ":"),
-            sort_keys=True,
-            default=str,
-        )
-        return True
+        try:
+            self._get_db()[self._key(key)] = json.dumps(
+                record,
+                separators=(",", ":"),
+                sort_keys=True,
+                default=str,
+            )
+            self._metrics["writes"] += 1
+            return True
+        except Exception:
+            self._metrics["errors"] += 1
+            return False
 
     def delete(self, key: str) -> bool:
         if not self.available:
@@ -102,6 +125,7 @@ class RocksLocalCache:
         hashed = self._key(key)
         if hashed in db:
             del db[hashed]
+            self._metrics["deletes"] += 1
             return True
         return False
 
@@ -112,6 +136,7 @@ class RocksLocalCache:
         keys = [key for key in db.keys() if str(key).startswith(f"{self.namespace}:")]
         for key in keys:
             del db[key]
+        self._metrics["invalidated"] += len(keys)
         return len(keys)
 
     def delete_prefix(self, prefix: str) -> int:
@@ -122,7 +147,18 @@ class RocksLocalCache:
         keys = [key for key in db.keys() if str(key).startswith(target)]
         for key in keys:
             del db[key]
+        self._metrics["invalidated"] += len(keys)
         return len(keys)
+
+    def metrics(self) -> Dict[str, Any]:
+        hits = int(self._metrics["hits"])
+        misses = int(self._metrics["misses"])
+        lookups = hits + misses
+        return {
+            **self._metrics,
+            "lookups": lookups,
+            "hit_rate": round(hits / lookups, 4) if lookups else 0.0,
+        }
 
     def make_key(self, prefix: str, payload: Any) -> str:
         encoded = json.dumps(
