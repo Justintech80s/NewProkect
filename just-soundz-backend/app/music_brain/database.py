@@ -383,3 +383,82 @@ class MusicDatabase:
             },
             "similarity": float(r[19]),
         } for r in rows]
+
+
+    def set_sample_audio_embedding(
+        self,
+        sample_asset_id: int,
+        embedding: Iterable[float],
+        *,
+        traits: Dict[str, Any] | None = None,
+        metadata: Dict[str, Any] | None = None,
+    ) -> bool:
+        if not self.configured:
+            return False
+        vector = "[" + ",".join(str(float(x)) for x in embedding) + "]"
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO sample_audio_embeddings(
+                        sample_asset_id,embedding,production_traits,metadata
+                    )
+                    VALUES (%s,%s::extensions.vector,%s::jsonb,%s::jsonb)
+                    ON CONFLICT (sample_asset_id)
+                    DO UPDATE SET
+                        embedding=EXCLUDED.embedding,
+                        production_traits=EXCLUDED.production_traits,
+                        metadata=EXCLUDED.metadata,
+                        updated_at=NOW()
+                    """,
+                    (
+                        sample_asset_id,
+                        vector,
+                        json.dumps(traits or {}),
+                        json.dumps(metadata or {}),
+                    ),
+                )
+                conn.commit()
+        return True
+
+    def audio_sample_similarity_search(
+        self,
+        embedding: Iterable[float],
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        if not self.configured:
+            return []
+        vector = "[" + ",".join(str(float(x)) for x in embedding) + "]"
+        sql = """
+            SELECT
+                sa.id,
+                sa.source_uri,
+                sa.storage_uri,
+                sa.rights_status,
+                sa.sampling_allowed,
+                sa.commercial_use,
+                sa.duration_seconds,
+                sae.production_traits,
+                1 - (sae.embedding <=> %s::extensions.vector) AS similarity
+            FROM sample_audio_embeddings sae
+            JOIN sample_assets sa ON sa.id=sae.sample_asset_id
+            WHERE sa.sampling_allowed=TRUE
+              AND (sa.commercial_use=TRUE OR sa.rights_status='user_owned')
+            ORDER BY sae.embedding <=> %s::extensions.vector
+            LIMIT %s
+        """
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (vector, vector, limit))
+                rows = cur.fetchall()
+        return [{
+            "sample_asset_id": r[0],
+            "source_uri": r[1],
+            "storage_uri": r[2],
+            "rights_status": r[3],
+            "sampling_allowed": r[4],
+            "commercial_use": r[5],
+            "duration_seconds": r[6],
+            "production_traits": r[7] or {},
+            "similarity": float(r[8]),
+        } for r in rows]
