@@ -342,3 +342,44 @@ class MusicDatabase:
             }
             for row in rows
         ]
+
+
+    def semantic_search_with_profiles(
+        self,
+        embedding: Iterable[float],
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        if not self.configured:
+            return []
+
+        vector = "[" + ",".join(str(float(x)) for x in embedding) + "]"
+        sql = """
+            SELECT
+                s.id,s.external_id,s.title,s.artist_name,s.album_name,s.release_year,
+                s.bpm,s.musical_key,s.genres,s.mood,s.instruments,
+                p.era,p.tempo_bucket,p.energy,p.harmonic_complexity,
+                p.bass_prominence,p.sample_chop_intensity,p.texture_tags,p.techniques,
+                1 - (e.embedding <=> %s::extensions.vector) AS similarity
+            FROM song_embeddings e
+            JOIN songs s ON s.id=e.song_id
+            LEFT JOIN production_profiles p ON p.song_id=s.id
+            ORDER BY e.embedding <=> %s::extensions.vector
+            LIMIT %s
+        """
+        with self.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (vector, vector, limit))
+                rows = cur.fetchall()
+
+        return [{
+            "id": r[0], "external_id": r[1], "title": r[2], "artist": r[3],
+            "album": r[4], "year": r[5], "bpm": r[6], "key": r[7],
+            "genres": r[8] or [], "mood": r[9] or [], "instruments": r[10] or [],
+            "production_profile": {
+                "era": r[11], "tempo_bucket": r[12], "energy": r[13],
+                "harmonic_complexity": r[14], "bass_prominence": r[15],
+                "sample_chop_intensity": r[16], "texture_tags": r[17] or [],
+                "techniques": r[18] or [],
+            },
+            "similarity": float(r[19]),
+        } for r in rows]
