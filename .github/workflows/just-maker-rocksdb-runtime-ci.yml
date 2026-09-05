@@ -1,0 +1,43 @@
+name: Just Maker RocksDB Runtime CI
+
+on:
+  push:
+    paths:
+      - "just-soundz-backend/app/services/rocksdb_runtime.py"
+      - "just-soundz-backend/app/rocksdb_preflight.py"
+      - "just-soundz-backend/docker-compose.rocksdb.yml"
+      - ".github/workflows/just-maker-rocksdb-runtime-ci.yml"
+  pull_request:
+    paths:
+      - "just-soundz-backend/app/services/rocksdb_runtime.py"
+      - "just-soundz-backend/app/rocksdb_preflight.py"
+      - "just-soundz-backend/docker-compose.rocksdb.yml"
+      - ".github/workflows/just-maker-rocksdb-runtime-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  rocksdb-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: just-soundz-backend
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install RocksDB runtime
+        run: pip install rocksdict
+
+      - name: Run real RocksDB read/write preflight
+        env:
+          PYTHONPATH: .
+          JUST_MAKER_ROCKSDB_ENABLED: "1"
+          JUST_MAKER_ROCKSDB_PATH: /tmp/just-maker-rocksdb-ci
+          JUST_MAKER_ROCKSDB_MIN_FREE_BYTES: "1048576"
+        run: python -m app.rocksdb_preflight
