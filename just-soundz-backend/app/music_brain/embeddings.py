@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from pathlib import Path
 from typing import List
 
 
@@ -20,6 +21,13 @@ class MusicEmbeddingEngine:
         except Exception:
             return self._fallback(text.encode("utf-8"))
 
+    def audio_embedding(self, audio_path: str) -> List[float]:
+        try:
+            return self._remote_audio_embedding(audio_path)
+        except Exception:
+            payload = Path(audio_path).read_bytes()
+            return self._fallback(payload)
+
     def _remote_text_embedding(self, text: str) -> List[float]:
         import os
         import httpx
@@ -35,6 +43,28 @@ class MusicEmbeddingEngine:
             headers=headers,
             timeout=60,
         )
+        response.raise_for_status()
+        values = response.json()["embedding"]
+        return [float(v) for v in values]
+
+    def _remote_audio_embedding(self, audio_path: str) -> List[float]:
+        import os
+        import httpx
+
+        url = os.getenv("JUST_MAKER_EMBEDDING_URL")
+        if not url:
+            raise RuntimeError("embedding service not configured")
+        token = os.getenv("JUST_MAKER_EMBEDDING_TOKEN")
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+
+        path = Path(audio_path)
+        with path.open("rb") as handle:
+            response = httpx.post(
+                url.rstrip("/") + "/embed/audio",
+                files={"audio": (path.name, handle, "audio/wav")},
+                headers=headers,
+                timeout=120,
+            )
         response.raise_for_status()
         values = response.json()["embedding"]
         return [float(v) for v in values]
