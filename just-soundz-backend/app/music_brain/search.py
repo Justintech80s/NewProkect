@@ -7,6 +7,7 @@ from .embeddings import MusicEmbeddingEngine
 from .graph import MusicGraph
 from .relational_graph import RelationalMusicGraph
 from ..services.local_cache import RocksLocalCache
+from ..services.cache_tuner import AdaptiveCacheTuner
 
 
 class MusicBrainSearch:
@@ -18,6 +19,7 @@ class MusicBrainSearch:
         self.graph = MusicGraph()
         self.relational_graph = RelationalMusicGraph(self.db)
         self.cache = RocksLocalCache("music-brain-search")
+        self.cache_tuner = AdaptiveCacheTuner()
 
     def search(
         self,
@@ -83,5 +85,12 @@ class MusicBrainSearch:
                 **self.cache.status(),
             },
         }
-        self.cache.set(cache_key, result)
+        ttl = self.cache_tuner.ttl_for(self.cache)
+        self.cache.set(cache_key, result, ttl_seconds=ttl)
+        result["cache"]["ttl_seconds"] = ttl
+        result["cache"]["tuning"] = self.cache_tuner.recommend(
+            self.cache.metrics(),
+            namespace=self.cache.namespace,
+            base_ttl=self.cache.default_ttl,
+        )
         return result
