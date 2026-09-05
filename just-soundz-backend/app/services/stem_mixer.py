@@ -7,9 +7,14 @@ from typing import Any, Dict, List
 
 import numpy as np
 
+from .rust_dsp import RustDSP
+
 
 class StemMixer:
-    """Mixes generated mono/stereo PCM WAV stems into a final stereo master bus."""
+    """Mixes generated stems with optional Rust-accelerated DSP."""
+
+    def __init__(self):
+        self.dsp = RustDSP()
 
     def mix(
         self,
@@ -41,7 +46,7 @@ class StemMixer:
             eq = bus.get("eq") or {}
             high_pass_hz = float(eq.get("high_pass_hz", 0.0))
             if high_pass_hz > 0:
-                stereo = self._high_pass(stereo, sr, high_pass_hz)
+                stereo = self.dsp.high_pass(stereo, sr, high_pass_hz)
 
             if float(eq.get("mud_cut_db", 0.0)) < 0:
                 stereo = self._tilt_reduce_low_mids(stereo, amount=0.08)
@@ -54,7 +59,7 @@ class StemMixer:
             stereo[:, 1] *= right_gain
 
             if (bus.get("limiter") or {}).get("enabled"):
-                stereo = np.tanh(stereo * 1.15) / np.tanh(1.15)
+                stereo = self.dsp.soft_clip(stereo, 1.15)
 
             mix[:len(stereo)] += stereo
 
@@ -70,6 +75,7 @@ class StemMixer:
             "audio_path": str(path),
             "sample_rate": sr,
             "stem_count": len(valid),
+            "dsp": self.dsp.status(),
             "stems": [
                 {
                     "stem": s.get("stem"),
