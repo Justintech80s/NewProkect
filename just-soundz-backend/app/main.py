@@ -48,6 +48,7 @@ from .services.readiness import ReadinessChecker
 from .services.reference_audio import ReferenceAudioAnalyzer
 from .services.reference_traits import ReferenceTraitBlender
 from .services.rust_dsp import RustDSP
+from .services.rocksdb_runtime import RocksDBRuntime
 from .services.repetition import RepetitionDetector
 from .services.rhythm_transformer import RhythmTransformer
 from .services.router import GenerationRouter
@@ -61,7 +62,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="4.7.0")
+app = FastAPI(title="Just Maker AI Backend", version="4.8.0")
 
 allowed_origins = [
     origin.strip()
@@ -131,6 +132,7 @@ usage_quota = UsageQuotaService()
 operations = OperationsMetrics()
 quality_cost_controller = QualityCostController(operations)
 rust_dsp = RustDSP()
+rocksdb_runtime = RocksDBRuntime()
 readiness = ReadinessChecker(
     database=music_brain_search.db,
     router=router,
@@ -752,7 +754,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "4.7.0",
+        "version": "4.8.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -799,6 +801,8 @@ def root():
             "rust-dsp-acceleration",
             "kafka-runtime-health",
             "kafka-topic-bootstrap",
+            "rocksdb-runtime-preflight",
+            "persistent-worker-cache-storage",
             "gpu-model-worker",
             "generation",
             "repetition-check",
@@ -833,7 +837,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "4.7.0",
+        "version": "4.8.0",
         "generator": router.provider,
     }
 
@@ -858,6 +862,15 @@ def ready():
 
 
 
+
+
+
+@app.get("/v1/rocksdb-runtime")
+def rocksdb_runtime_status(
+    authorization: Optional[str] = Header(default=None),
+):
+    require_user(authorization)
+    return rocksdb_runtime.preflight()
 
 
 @app.get("/v1/dsp-status")
