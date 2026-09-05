@@ -58,7 +58,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="4.3.0")
+app = FastAPI(title="Just Maker AI Backend", version="4.4.0")
 
 allowed_origins = [
     origin.strip()
@@ -746,7 +746,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "4.3.0",
+        "version": "4.4.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -788,6 +788,7 @@ def root():
             "rocksdb-worker-local-cache",
             "kafka-cache-invalidation",
             "distributed-cache-coherence",
+            "rocksdb-cache-observability",
             "gpu-model-worker",
             "generation",
             "repetition-check",
@@ -822,7 +823,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "4.3.0",
+        "version": "4.4.0",
         "generator": router.provider,
     }
 
@@ -858,6 +859,7 @@ def cache_status(
         "role": "worker-local-hot-cache",
         "authoritative_store": "supabase-postgres",
         "event_backbone": "kafka",
+        "metrics": music_brain_search.cache.metrics(),
     }
 
 
