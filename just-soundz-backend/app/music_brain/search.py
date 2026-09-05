@@ -6,6 +6,7 @@ from .database import MusicDatabase
 from .embeddings import MusicEmbeddingEngine
 from .graph import MusicGraph
 from .relational_graph import RelationalMusicGraph
+from ..services.local_cache import RocksLocalCache
 
 
 class MusicBrainSearch:
@@ -16,6 +17,7 @@ class MusicBrainSearch:
         self.embeddings = MusicEmbeddingEngine()
         self.graph = MusicGraph()
         self.relational_graph = RelationalMusicGraph(self.db)
+        self.cache = RocksLocalCache("music-brain-search")
 
     def search(
         self,
@@ -23,6 +25,24 @@ class MusicBrainSearch:
         limit: int = 20,
         sample_eligible_only: bool = False,
     ) -> Dict[str, Any]:
+        cache_key = self.cache.make_key(
+            "search",
+            {
+                "query": query,
+                "limit": limit,
+                "sample_eligible_only": sample_eligible_only,
+            },
+        )
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return {
+                **cached,
+                "cache": {
+                    "hit": True,
+                    **self.cache.status(),
+                },
+            }
+
         embedding = self.embeddings.text_embedding(query)
         if sample_eligible_only:
             vector_results = self.db.semantic_sample_search(
@@ -50,7 +70,7 @@ class MusicBrainSearch:
             if top_external_id:
                 graph_results = self.graph.related(top_external_id, limit=min(limit, 25))
 
-        return {
+        result = {
             "query": query,
             "sample_eligible_only": sample_eligible_only,
             "results": vector_results,
@@ -58,4 +78,10 @@ class MusicBrainSearch:
             "relational_graph_results": relational_graph_results,
             "database_configured": self.db.configured,
             "graph_configured": self.graph.configured,
+            "cache": {
+                "hit": False,
+                **self.cache.status(),
+            },
         }
+        self.cache.set(cache_key, result)
+        return result
