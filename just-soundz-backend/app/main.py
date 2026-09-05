@@ -30,6 +30,7 @@ from .services.instrumentation_planner import InstrumentationPlanner
 from .services.mastering import MasteringEngine
 from .services.mastering_critic import MasteringCritic
 from .services.mix_intelligence import MixIntelligence
+from .services.novelty_engine import NoveltyEngine
 from .services.producer import ProducerPlanner
 from .services.producer_dna import ProducerDNAEngine
 from .services.operations import OperationsMetrics, Stopwatch
@@ -53,7 +54,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="3.3.0")
+app = FastAPI(title="Just Maker AI Backend", version="3.4.0")
 
 allowed_origins = [
     origin.strip()
@@ -105,6 +106,7 @@ self_repair = SelfRepairEngine()
 mastering = MasteringEngine()
 mastering_critic = MasteringCritic()
 mix_intelligence = MixIntelligence()
+novelty_engine = NoveltyEngine()
 quality = QualityJudge()
 stems = StemSeparator()
 analyzer = AudioAnalyzer()
@@ -276,6 +278,7 @@ def run_generation(req: GenerateRequest, user_id: str | None = None):
     plan = originality_guard.apply(plan)
     plan = preferences.apply_to_plan(user_id, plan)
     plan = creative_memory.apply(user_id, plan)
+    plan = novelty_engine.apply(plan, req.prompt, variation=0)
     plan = rhythm_transformer.apply(plan)
     plan = harmony_planner.apply(plan)
     plan = instrumentation_planner.apply(plan)
@@ -649,7 +652,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "3.3.0",
+        "version": "3.4.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -663,6 +666,7 @@ def root():
             "originality-guard",
             "adaptive-preference-learning",
             "successful-generation-creative-memory",
+            "controlled-novelty-engine",
             "rhythm-transformer",
             "harmony-planner",
             "instrumentation-planner",
@@ -712,7 +716,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "3.3.0",
+        "version": "3.4.0",
         "generator": router.provider,
     }
 
