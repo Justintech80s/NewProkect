@@ -34,6 +34,7 @@ from .services.producer_dna import ProducerDNAEngine
 from .services.operations import OperationsMetrics, Stopwatch
 from .services.originality_guard import OriginalityGuard
 from .services.production_critic import ProductionCritic
+from .services.preferences import PreferenceLearningStore
 from .services.quality import QualityJudge
 from .services.readiness import ReadinessChecker
 from .services.reference_audio import ReferenceAudioAnalyzer
@@ -51,7 +52,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="3.1.0")
+app = FastAPI(title="Just Maker AI Backend", version="3.2.0")
 
 allowed_origins = [
     origin.strip()
@@ -81,6 +82,7 @@ generation_evaluator = GenerationEvaluator()
 evaluation_store = EvaluationStore()
 conditioning_compiler = ConditioningCompiler()
 production_critic = ProductionCritic()
+preferences = PreferenceLearningStore()
 stem_arranger = StemArranger()
 professional_stems = ProfessionalStemGenerator()
 stem_mixer = StemMixer()
@@ -169,6 +171,12 @@ class GenerateResponse(BaseModel):
     evaluation: Dict[str, Any]
 
 
+class FeedbackRequest(BaseModel):
+    rating: int = Field(ge=1, le=5)
+    action: str = Field(pattern="^(like|dislike|save|reject)$")
+    notes: Optional[str] = Field(default=None, max_length=500)
+
+
 class MusicSearchRequest(BaseModel):
     query: str = Field(min_length=2)
     limit: int = Field(default=20, ge=1, le=100)
@@ -222,7 +230,7 @@ def generate_professional_stem_mix(plan: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def run_generation(req: GenerateRequest):
+def run_generation(req: GenerateRequest, user_id: str | None = None):
     music_context = music_context_builder.build(req.prompt)
 
     plan = planner.build_plan(
@@ -264,6 +272,7 @@ def run_generation(req: GenerateRequest):
         plan = reference_trait_blender.apply(plan)
 
     plan = originality_guard.apply(plan)
+    plan = preferences.apply_to_plan(user_id, plan)
     plan = rhythm_transformer.apply(plan)
     plan = harmony_planner.apply(plan)
     plan = instrumentation_planner.apply(plan)
@@ -498,7 +507,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 
     try:
         durable_jobs.update(job_id, stage="generating", progress=0.20)
-        result = run_generation(req)
+        result = run_generation(req, user_id=user_id)
 
         artifacts = []
         generation = result.get("generation") or {}
@@ -636,7 +645,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "3.1.0",
+        "version": "3.2.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -648,6 +657,7 @@ def root():
             "reference-audio-intelligence",
             "reference-trait-blending",
             "originality-guard",
+            "adaptive-preference-learning",
             "rhythm-transformer",
             "harmony-planner",
             "instrumentation-planner",
@@ -697,7 +707,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "3.1.0",
+        "version": "3.2.0",
         "generator": router.provider,
     }
 
@@ -738,6 +748,40 @@ def operations_status(
 def current_user(authorization: Optional[str] = Header(default=None)):
     return require_user(authorization)
 
+
+
+
+@app.get("/v1/preferences")
+def get_music_preferences(
+    authorization: Optional[str] = Header(default=None),
+):
+    user = require_user(authorization)
+    return preferences.get_profile(user["id"])
+
+
+@app.post("/v1/jobs/{job_id}/feedback")
+def save_generation_feedback(
+    job_id: str,
+    req: FeedbackRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    user = require_user(authorization)
+
+    if not durable_jobs.get(job_id, user_id=user["id"]):
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    try:
+        return preferences.save_feedback(
+            user_id=user["id"],
+            job_id=job_id,
+            rating=req.rating,
+            action=req.action,
+            notes=req.notes,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/v1/usage")
