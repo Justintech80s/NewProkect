@@ -19,6 +19,7 @@ class ConditioningPromptCompiler:
         rhythm = conditioning.get("rhythm") or {}
         harmony = musical.get("harmony") or {}
         advanced = conditioning.get("advanced_controls") or {}
+        reference = conditioning.get("reference") or {}
 
         parts: List[str] = []
 
@@ -97,6 +98,19 @@ class ConditioningPromptCompiler:
             parts.append(
                 "locked 16-step rhythmic control with kick, snare, hats, percussion, "
                 "microtiming and humanized velocity"
+            )
+
+        reference_traits = reference.get("production_traits") or {}
+        if reference_traits:
+            trait_summary = ", ".join(
+                f"{name.replace('_', ' ')} {float(value):.2f}"
+                for name, value in sorted(reference_traits.items())
+            )
+            parts.append(
+                "match only these broad reference production traits: " + trait_summary
+            )
+            parts.append(
+                "do not reproduce source melody, note sequence, or exact arrangement"
             )
 
         negative = text.get("negative") or []

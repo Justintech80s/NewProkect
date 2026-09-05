@@ -48,6 +48,11 @@ class ConditioningCompiler:
                 "reference_count": (plan.get("music_brain") or {}).get("reference_count", 0),
             },
             "advanced_controls": plan.get("advanced_conditioning") or {},
+            "reference": {
+                "production_traits": (plan.get("reference_audio") or {}).get("production_traits") or {},
+                "policy": (plan.get("reference_audio") or {}).get("policy") or {},
+                "originality_guard": plan.get("originality_guard") or {},
+            },
         }
 
     def apply(self, plan: Dict[str, Any]) -> Dict[str, Any]:
