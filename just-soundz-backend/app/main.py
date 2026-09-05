@@ -21,6 +21,7 @@ from .services.auth import SupabaseUserAuth
 from .services.arranger import ArrangementEngine
 from .services.conditioning import ConditioningCompiler
 from .services.candidate_ranker import CandidateRanker
+from .services.candidate_budget import CandidateBudgetPlanner
 from .services.creative_memory import CreativeMemoryStore
 from .services.durable_jobs import DurableGenerationJobStore
 from .services.evaluation import GenerationEvaluator
@@ -55,7 +56,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="3.6.0")
+app = FastAPI(title="Just Maker AI Backend", version="3.7.0")
 
 allowed_origins = [
     origin.strip()
@@ -85,6 +86,7 @@ generation_evaluator = GenerationEvaluator()
 evaluation_store = EvaluationStore()
 conditioning_compiler = ConditioningCompiler()
 candidate_ranker = CandidateRanker()
+candidate_budget = CandidateBudgetPlanner()
 creative_memory = CreativeMemoryStore()
 production_critic = ProductionCritic()
 preferences = PreferenceLearningStore()
@@ -165,6 +167,7 @@ class GenerateRequest(BaseModel):
     reference_traits: Optional[Dict[str, float]] = None
     variation: int = Field(default=0, ge=0, le=5)
     candidate_count: int = Field(default=1, ge=1, le=3)
+    candidate_mode: str = Field(default="manual", pattern="^(manual|adaptive)$")
 
 
 class GenerateResponse(BaseModel):
@@ -479,9 +482,18 @@ def run_generation(req: GenerateRequest, user_id: str | None = None, _single_can
     # Best-of-N mode generates a small candidate set, evaluates each through the
     # same full pipeline, then returns the strongest result. Recursive candidates
     # are forced to single-candidate mode to avoid nested fan-out.
-    if req.candidate_count > 1 and not _single_candidate:
+    budget = candidate_budget.decide(
+        requested_count=req.candidate_count,
+        quality_threshold=req.quality_threshold,
+        duration_seconds=req.duration_seconds,
+        make_stems=req.make_stems,
+        prompt=req.prompt,
+        mode=req.candidate_mode,
+    )
+
+    if budget["candidate_count"] > 1 and not _single_candidate:
         candidates = []
-        for offset in range(req.candidate_count):
+        for offset in range(budget["candidate_count"]):
             candidate_payload = req.model_dump()
             candidate_payload["candidate_count"] = 1
             candidate_payload["variation"] = (req.variation + offset) % 6
@@ -499,6 +511,7 @@ def run_generation(req: GenerateRequest, user_id: str | None = None, _single_can
         winner["candidate_selection"] = {
             "mode": "best-of-n",
             "candidate_count": len(candidates),
+            "budget": budget,
             "selected_variation": ranked[0]["variation"],
             "ranking": candidate_ranker.summary(ranked),
         }
@@ -684,7 +697,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "3.6.0",
+        "version": "3.7.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -701,6 +714,7 @@ def root():
             "controlled-novelty-engine",
             "multi-variation-generation-control",
             "best-of-n-candidate-selection",
+            "adaptive-candidate-compute-budget",
             "rhythm-transformer",
             "harmony-planner",
             "instrumentation-planner",
@@ -750,7 +764,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "3.6.0",
+        "version": "3.7.0",
         "generator": router.provider,
     }
 
