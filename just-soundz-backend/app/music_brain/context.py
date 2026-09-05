@@ -34,6 +34,12 @@ class MusicBrainContextBuilder:
         moods: List[str] = []
         instruments: List[str] = []
         years: List[int] = []
+        eras: List[str] = []
+        techniques: List[str] = []
+        textures: List[str] = []
+        harmonic_complexity: List[float] = []
+        bass_prominence: List[float] = []
+        sample_chop_intensity: List[float] = []
 
         for row in ref_rows:
             genres.extend(str(x) for x in (row.get("genres") or []))
@@ -41,6 +47,17 @@ class MusicBrainContextBuilder:
             instruments.extend(str(x) for x in (row.get("instruments") or []))
             if row.get("year"):
                 years.append(int(row["year"]))
+            profile = row.get("production_profile") or {}
+            if profile.get("era"):
+                eras.append(str(profile["era"]))
+            techniques.extend(str(x) for x in (profile.get("techniques") or []))
+            textures.extend(str(x) for x in (profile.get("texture_tags") or []))
+            if profile.get("harmonic_complexity") is not None:
+                harmonic_complexity.append(float(profile["harmonic_complexity"]))
+            if profile.get("bass_prominence") is not None:
+                bass_prominence.append(float(profile["bass_prominence"]))
+            if profile.get("sample_chop_intensity") is not None:
+                sample_chop_intensity.append(float(profile["sample_chop_intensity"]))
 
         guidance = {
             "suggested_bpm": round(median(bpms), 2) if bpms else None,
@@ -49,6 +66,12 @@ class MusicBrainContextBuilder:
             "top_moods": self._top(moods, 6),
             "top_instruments": self._top(instruments, 8),
             "year_range": [min(years), max(years)] if years else None,
+            "top_eras": self._top(eras, 4),
+            "top_techniques": self._top(techniques, 8),
+            "top_textures": self._top(textures, 8),
+            "harmonic_complexity": round(sum(harmonic_complexity) / len(harmonic_complexity), 4) if harmonic_complexity else None,
+            "bass_prominence": round(sum(bass_prominence) / len(bass_prominence), 4) if bass_prominence else None,
+            "sample_chop_intensity": round(sum(sample_chop_intensity) / len(sample_chop_intensity), 4) if sample_chop_intensity else None,
         }
 
         return {
@@ -60,6 +83,7 @@ class MusicBrainContextBuilder:
             "guidance": guidance,
             "references": [self._compact(r) for r in ref_rows[:limit]],
             "eligible_samples": [self._compact(r) for r in eligible_rows[:limit]],
+            "related_songs": references.get("relational_graph_results") or [],
         }
 
     def apply_to_plan(
@@ -84,6 +108,7 @@ class MusicBrainContextBuilder:
             "guidance": guidance,
             "references": context.get("references", []),
             "eligible_samples": context.get("eligible_samples", []),
+            "related_songs": context.get("related_songs", []),
         }
 
         enriched["production_context"] = {
@@ -91,6 +116,11 @@ class MusicBrainContextBuilder:
             "moods": guidance.get("top_moods", []),
             "instruments": guidance.get("top_instruments", []),
             "era": guidance.get("year_range"),
+            "techniques": guidance.get("top_techniques", []),
+            "textures": guidance.get("top_textures", []),
+            "harmonic_complexity": guidance.get("harmonic_complexity"),
+            "bass_prominence": guidance.get("bass_prominence"),
+            "sample_chop_intensity": guidance.get("sample_chop_intensity"),
         }
         return enriched
 
@@ -119,4 +149,5 @@ class MusicBrainContextBuilder:
             "source_uri": row.get("source_uri"),
             "storage_uri": row.get("storage_uri"),
             "similarity": row.get("similarity"),
+            "production_profile": row.get("production_profile") or {},
         }

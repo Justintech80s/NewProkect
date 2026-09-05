@@ -42,7 +42,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="2.1.0")
+app = FastAPI(title="Just Maker AI Backend", version="2.2.0")
 
 allowed_origins = [
     origin.strip()
@@ -494,11 +494,13 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
             "music-brain-retrieval",
+            "production-profile-retrieval",
+            "relational-music-graph",
             "producer",
             "producer-dna",
             "rhythm-transformer",
@@ -544,7 +546,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "generator": router.provider,
     }
 
@@ -581,6 +583,7 @@ def music_brain_status():
     return {
         "database_configured": music_brain_search.db.configured,
         "graph_configured": music_brain_search.graph.configured,
+        "relational_graph_configured": music_brain_search.relational_graph.configured,
         "embedding_dimension": music_brain_search.embeddings.dimension,
         "sampling_policy": "rights-aware",
     }
