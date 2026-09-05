@@ -19,6 +19,8 @@ from .services.auth import SupabaseUserAuth
 from .services.arranger import ArrangementEngine
 from .services.conditioning import ConditioningCompiler
 from .services.durable_jobs import DurableGenerationJobStore
+from .services.evaluation import GenerationEvaluator
+from .services.evaluation_store import EvaluationStore
 from .services.job_recovery import JobRecoveryPlanner
 from .services.harmony_planner import HarmonyPlanner
 from .services.instrumentation_planner import InstrumentationPlanner
@@ -42,7 +44,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="2.2.0")
+app = FastAPI(title="Just Maker AI Backend", version="2.3.0")
 
 allowed_origins = [
     origin.strip()
@@ -68,6 +70,8 @@ artifact_delivery = SecureArtifactDelivery()
 user_auth = SupabaseUserAuth()
 job_recovery = JobRecoveryPlanner()
 durable_jobs = DurableGenerationJobStore()
+generation_evaluator = GenerationEvaluator()
+evaluation_store = EvaluationStore()
 conditioning_compiler = ConditioningCompiler()
 production_critic = ProductionCritic()
 stem_arranger = StemArranger()
@@ -116,6 +120,7 @@ class GenerateResponse(BaseModel):
     repetition: Dict[str, Any]
     mastering: Dict[str, Any]
     production_critic: Dict[str, Any]
+    evaluation: Dict[str, Any]
 
 
 class MusicSearchRequest(BaseModel):
@@ -366,6 +371,20 @@ def run_generation(req: GenerateRequest):
             "reason": "no local audio path or stems disabled",
         }
 
+    evaluation = generation_evaluator.evaluate(
+        plan=plan,
+        generation=generation,
+        analysis=analysis,
+        quality=score,
+        repetition=repetition,
+        mastering={
+            **mastering_result,
+            "critic": mastering_review,
+        },
+        stems=stem_result,
+        artifacts=[],
+    )
+
     return {
         "plan": plan,
         "generation": {
@@ -388,6 +407,7 @@ def run_generation(req: GenerateRequest):
             **critique,
             "repair_instructions": production_critic.repair_instructions(critique),
         },
+        "evaluation": evaluation,
     }
 
 
@@ -455,6 +475,17 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
                 pass
 
         result["artifacts"] = artifacts
+        result["evaluation"] = generation_evaluator.evaluate(
+            plan=result.get("plan") or {},
+            generation=result.get("generation") or {},
+            analysis=result.get("analysis") or {},
+            quality=result.get("quality") or {},
+            repetition=result.get("repetition") or {},
+            mastering=result.get("mastering") or {},
+            stems=result.get("stems") or {},
+            artifacts=artifacts,
+        )
+        evaluation_store.save(job_id, user_id, result["evaluation"])
         jobs.update(job_id, status="complete", result=result)
         if user_id:
             usage_quota.record_event(
@@ -494,7 +525,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "2.2.0",
+        "version": "2.3.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -525,6 +556,8 @@ def root():
             "mastering",
             "quality-check",
             "production-critic",
+            "automated-evaluation",
+            "provider-benchmarking",
             "closed-loop-self-repair",
             "stems",
             "durable-job-state",
@@ -546,7 +579,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "2.2.0",
+        "version": "2.3.0",
         "generator": router.provider,
     }
 
@@ -571,6 +604,18 @@ def current_user(authorization: Optional[str] = Header(default=None)):
 def usage_status(authorization: Optional[str] = Header(default=None)):
     user = require_user(authorization)
     return usage_quota.status(user["id"])
+
+
+
+@app.get("/v1/evaluations/providers")
+def provider_evaluation_summary(
+    authorization: Optional[str] = Header(default=None),
+):
+    require_user(authorization)
+    return {
+        "providers": evaluation_store.provider_summary(),
+        "configured": evaluation_store.configured,
+    }
 
 
 @app.get("/v1/generation-workers")
