@@ -105,6 +105,25 @@ class RocksLocalCache:
             return True
         return False
 
+    def clear(self) -> int:
+        if not self.available:
+            return 0
+        db = self._get_db()
+        keys = [key for key in db.keys() if str(key).startswith(f"{self.namespace}:")]
+        for key in keys:
+            del db[key]
+        return len(keys)
+
+    def delete_prefix(self, prefix: str) -> int:
+        if not self.available:
+            return 0
+        db = self._get_db()
+        target = f"{self.namespace}:{prefix}"
+        keys = [key for key in db.keys() if str(key).startswith(target)]
+        for key in keys:
+            del db[key]
+        return len(keys)
+
     def make_key(self, prefix: str, payload: Any) -> str:
         encoded = json.dumps(
             payload,
