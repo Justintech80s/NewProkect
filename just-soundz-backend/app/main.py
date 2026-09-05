@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any
 
 from .jobs import jobs
 from .music_brain.batch import DatasetBatchIngestor
+from .music_brain.audio_intelligence import AudioIntelligenceEngine
 from .music_brain.context import MusicBrainContextBuilder
 from .music_brain.ingestion import MusicIngestionPipeline
 from .music_brain.rights import SampleRightsEngine
@@ -62,7 +63,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="5.0.0")
+app = FastAPI(title="Just Maker AI Backend", version="5.1.0")
 
 allowed_origins = [
     origin.strip()
@@ -127,6 +128,7 @@ music_brain_search = MusicBrainSearch()
 music_ingestion = MusicIngestionPipeline()
 sample_rights = SampleRightsEngine()
 dataset_ingestor = DatasetBatchIngestor()
+audio_intelligence = AudioIntelligenceEngine()
 music_context_builder = MusicBrainContextBuilder(music_brain_search)
 usage_quota = UsageQuotaService()
 operations = OperationsMetrics()
@@ -754,7 +756,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "5.0.0",
+        "version": "5.1.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -808,6 +810,9 @@ def root():
             "large-scale-music-brain-ingestion",
             "dataset-quality-gates",
             "metadata-rights-manifests",
+            "audio-embedding-intelligence",
+            "sonic-similarity-search",
+            "cleared-audio-vector-index",
             "gpu-model-worker",
             "generation",
             "repetition-check",
@@ -842,7 +847,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "5.0.0",
+        "version": "5.1.0",
         "generator": router.provider,
     }
 
@@ -868,6 +873,23 @@ def ready():
 
 
 
+
+
+
+@app.get("/v1/audio-intelligence/status")
+def audio_intelligence_status(
+    authorization: Optional[str] = Header(default=None),
+):
+    require_user(authorization)
+    return {
+        "database_configured": audio_intelligence.database.configured,
+        "embedding_dimension": audio_intelligence.embeddings.dimension,
+        "embedding_service_configured": bool(
+            os.getenv("JUST_MAKER_EMBEDDING_URL")
+        ),
+        "index_scope": "cleared-sample-assets-and-user-owned-audio",
+        "automatic_sampling_scope": "rights-gated",
+    }
 
 
 @app.get("/v1/rocksdb-runtime")
