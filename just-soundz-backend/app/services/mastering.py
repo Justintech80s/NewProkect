@@ -43,6 +43,8 @@ class MasteringEngine:
         fade = min(int(sr * 0.02), len(audio) // 2)
         if fade > 1:
             ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+            if audio.ndim == 2:
+                ramp = ramp[:, None]
             audio[:fade] *= ramp
             audio[-fade:] *= ramp[::-1]
 

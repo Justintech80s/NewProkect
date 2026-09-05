@@ -55,3 +55,19 @@ def test_section_repair_changes_plan():
     }
     fixed = repair.repair_plan(plan, {"score": 0.95}, attempt=1)
     assert fixed["arrangement"] != plan["arrangement"]
+
+
+def test_mastering_fade_handles_mono_channel_matrix():
+    provider = ProceduralMusicProvider()
+    generated = provider.generate({
+        "bpm": 90,
+        "key": "C minor",
+        "duration_seconds": 10,
+        "drums": {"density": "medium"},
+        "arrangement": [],
+    })
+
+    result = MasteringEngine().process(generated["audio_path"])
+
+    assert result["mastered"] is True
+    assert result["peak_dbfs"] <= -0.3
