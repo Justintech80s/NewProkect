@@ -54,7 +54,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="3.4.0")
+app = FastAPI(title="Just Maker AI Backend", version="3.5.0")
 
 allowed_origins = [
     origin.strip()
@@ -161,6 +161,7 @@ class GenerateRequest(BaseModel):
     make_stems: bool = True
     quality_threshold: float = Field(default=0.72, ge=0.0, le=1.0)
     reference_traits: Optional[Dict[str, float]] = None
+    variation: int = Field(default=0, ge=0, le=5)
 
 
 class GenerateResponse(BaseModel):
@@ -278,7 +279,7 @@ def run_generation(req: GenerateRequest, user_id: str | None = None):
     plan = originality_guard.apply(plan)
     plan = preferences.apply_to_plan(user_id, plan)
     plan = creative_memory.apply(user_id, plan)
-    plan = novelty_engine.apply(plan, req.prompt, variation=0)
+    plan = novelty_engine.apply(plan, req.prompt, variation=req.variation)
     plan = rhythm_transformer.apply(plan)
     plan = harmony_planner.apply(plan)
     plan = instrumentation_planner.apply(plan)
@@ -652,7 +653,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "3.4.0",
+        "version": "3.5.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -667,6 +668,7 @@ def root():
             "adaptive-preference-learning",
             "successful-generation-creative-memory",
             "controlled-novelty-engine",
+            "multi-variation-generation-control",
             "rhythm-transformer",
             "harmony-planner",
             "instrumentation-planner",
@@ -716,7 +718,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "3.4.0",
+        "version": "3.5.0",
         "generator": router.provider,
     }
 
