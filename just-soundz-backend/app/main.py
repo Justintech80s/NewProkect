@@ -63,7 +63,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="5.1.0")
+app = FastAPI(title="Just Maker AI Backend", version="5.2.0")
 
 allowed_origins = [
     origin.strip()
@@ -756,7 +756,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "5.1.0",
+        "version": "5.2.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -813,6 +813,8 @@ def root():
             "audio-embedding-intelligence",
             "sonic-similarity-search",
             "cleared-audio-vector-index",
+            "named-production-reference-translation",
+            "original-style-conditioning",
             "gpu-model-worker",
             "generation",
             "repetition-check",
@@ -847,7 +849,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "5.1.0",
+        "version": "5.2.0",
         "generator": router.provider,
     }
 
