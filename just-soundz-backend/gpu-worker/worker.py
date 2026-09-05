@@ -27,9 +27,12 @@ class GPUWorker:
         self._adapter = None
         try:
             from local_cache import RocksLocalCache
+            from cache_tuner import AdaptiveCacheTuner
             self.cache = RocksLocalCache("gpu-worker")
+            self.cache_tuner = AdaptiveCacheTuner()
         except Exception:
             self.cache = None
+            self.cache_tuner = None
 
     def status(self) -> Dict[str, Any]:
         return {
@@ -92,7 +95,12 @@ class GPUWorker:
         if prompt is None:
             prompt = self.compiler.compile(plan, conditioning, variation)
             if self.cache and prompt_cache_key:
-                self.cache.set(prompt_cache_key, prompt, ttl_seconds=3600)
+                ttl = (
+                    self.cache_tuner.ttl_for(self.cache)
+                    if self.cache_tuner
+                    else 3600
+                )
+                self.cache.set(prompt_cache_key, prompt, ttl_seconds=ttl)
         controls = conditioning.get("advanced_controls") or {}
         adapter = self._get_adapter()
 
@@ -124,9 +132,20 @@ class GPUWorker:
                 "conditioning_prompt": prompt,
                 "advanced_controls": controls,
                 "variation": variation,
-                "cache": self.cache.status() if self.cache else {
-                    "enabled": False,
-                    "available": False,
+                "cache": {
+                    **(self.cache.status() if self.cache else {
+                        "enabled": False,
+                        "available": False,
+                    }),
+                    "adaptive_tuning": (
+                        self.cache_tuner.recommend(
+                            self.cache.metrics(),
+                            namespace=self.cache.namespace,
+                            base_ttl=self.cache.default_ttl,
+                        )
+                        if self.cache and self.cache_tuner
+                        else {"enabled": False}
+                    ),
                 },
             },
         }
