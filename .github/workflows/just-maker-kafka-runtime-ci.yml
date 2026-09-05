@@ -1,0 +1,60 @@
+name: Just Maker Kafka Runtime CI
+
+on:
+  push:
+    paths:
+      - "just-soundz-backend/app/services/kafka_runtime.py"
+      - "just-soundz-backend/app/kafka_bootstrap.py"
+      - "just-soundz-backend/docker-compose.kafka.yml"
+      - ".github/workflows/just-maker-kafka-runtime-ci.yml"
+  pull_request:
+    paths:
+      - "just-soundz-backend/app/services/kafka_runtime.py"
+      - "just-soundz-backend/app/kafka_bootstrap.py"
+      - "just-soundz-backend/docker-compose.kafka.yml"
+      - ".github/workflows/just-maker-kafka-runtime-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  kafka-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: just-soundz-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Kafka client
+        run: pip install "confluent-kafka>=2.6,<3"
+
+      - name: Start Kafka KRaft broker
+        run: docker compose -f docker-compose.kafka.yml up -d
+
+      - name: Wait for broker
+        shell: bash
+        run: |
+          for i in {1..36}; do
+            if docker compose -f docker-compose.kafka.yml exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 5
+          done
+          docker compose -f docker-compose.kafka.yml logs kafka
+          exit 1
+
+      - name: Bootstrap and verify Just Maker topics
+        env:
+          JUST_MAKER_KAFKA_BOOTSTRAP_SERVERS: localhost:9092
+          JUST_MAKER_KAFKA_DEFAULT_PARTITIONS: "3"
+          JUST_MAKER_KAFKA_REPLICATION_FACTOR: "1"
+        run: PYTHONPATH=. python -m app.kafka_bootstrap
+
+      - name: Shut down Kafka
+        if: always()
+        run: docker compose -f docker-compose.kafka.yml down -v
