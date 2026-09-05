@@ -21,6 +21,7 @@ from .services.auth import SupabaseUserAuth
 from .services.arranger import ArrangementEngine
 from .services.conditioning import ConditioningCompiler
 from .services.candidate_ranker import CandidateRanker
+from .services.cache_tuner import AdaptiveCacheTuner
 from .services.candidate_budget import CandidateBudgetPlanner
 from .services.creative_memory import CreativeMemoryStore
 from .services.durable_jobs import DurableGenerationJobStore
@@ -58,7 +59,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="4.4.0")
+app = FastAPI(title="Just Maker AI Backend", version="4.5.0")
 
 allowed_origins = [
     origin.strip()
@@ -89,6 +90,7 @@ evaluation_store = EvaluationStore()
 event_bus = KafkaEventBus()
 conditioning_compiler = ConditioningCompiler()
 candidate_ranker = CandidateRanker()
+cache_tuner = AdaptiveCacheTuner()
 candidate_budget = CandidateBudgetPlanner()
 creative_memory = CreativeMemoryStore()
 production_critic = ProductionCritic()
@@ -746,7 +748,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "4.4.0",
+        "version": "4.5.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -789,6 +791,7 @@ def root():
             "kafka-cache-invalidation",
             "distributed-cache-coherence",
             "rocksdb-cache-observability",
+            "adaptive-rocksdb-ttl-tuning",
             "gpu-model-worker",
             "generation",
             "repetition-check",
@@ -823,7 +826,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "4.4.0",
+        "version": "4.5.0",
         "generator": router.provider,
     }
 
@@ -860,6 +863,11 @@ def cache_status(
         "authoritative_store": "supabase-postgres",
         "event_backbone": "kafka",
         "metrics": music_brain_search.cache.metrics(),
+        "adaptive_tuning": cache_tuner.recommend(
+            music_brain_search.cache.metrics(),
+            namespace=music_brain_search.cache.namespace,
+            base_ttl=music_brain_search.cache.default_ttl,
+        ),
     }
 
 
