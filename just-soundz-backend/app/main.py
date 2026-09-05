@@ -58,7 +58,7 @@ from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
 
-app = FastAPI(title="Just Maker AI Backend", version="4.1.0")
+app = FastAPI(title="Just Maker AI Backend", version="4.2.0")
 
 allowed_origins = [
     origin.strip()
@@ -746,7 +746,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
 def root():
     return {
         "service": "Just Maker AI Backend",
-        "version": "4.1.0",
+        "version": "4.2.0",
         "generator": router.provider,
         "status": "ready",
         "pipeline": [
@@ -785,6 +785,7 @@ def root():
             "postgres-transactional-outbox",
             "kafka-event-backbone",
             "gpu-worker-event-consumer-ready",
+            "rocksdb-worker-local-cache",
             "gpu-model-worker",
             "generation",
             "repetition-check",
@@ -819,7 +820,7 @@ def health():
     return {
         "ok": True,
         "service": "just-maker-ai-backend",
-        "version": "4.1.0",
+        "version": "4.2.0",
         "generator": router.provider,
     }
 
@@ -842,6 +843,20 @@ def ready():
         raise HTTPException(status_code=503, detail=status)
     return status
 
+
+
+
+@app.get("/v1/cache-status")
+def cache_status(
+    authorization: Optional[str] = Header(default=None),
+):
+    require_user(authorization)
+    return {
+        "music_brain": music_brain_search.cache.status(),
+        "role": "worker-local-hot-cache",
+        "authoritative_store": "supabase-postgres",
+        "event_backbone": "kafka",
+    }
 
 
 @app.get("/v1/event-backbone")
