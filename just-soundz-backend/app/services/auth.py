@@ -20,30 +20,40 @@ class SupabaseUserAuth:
 
     def get_user(self, authorization: Optional[str]) -> Dict[str, Any]:
         if not self.configured:
-            raise RuntimeError("Supabase user auth is not configured")
+            raise RuntimeError("authentication_service_unavailable")
 
         if not authorization or not authorization.lower().startswith("bearer "):
-            raise PermissionError("Missing bearer token")
+            raise PermissionError("authentication_required")
+
+        token = authorization.split(" ", 1)[1].strip()
+        if not token or len(token) > 8192:
+            raise PermissionError("authentication_required")
 
         import httpx
 
-        token = authorization.split(" ", 1)[1].strip()
-        response = httpx.get(
-            f"{self.supabase_url.rstrip('/')}/auth/v1/user",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "apikey": self.publishable_key,
-            },
-            timeout=20,
-        )
+        try:
+            response = httpx.get(
+                f"{self.supabase_url.rstrip('/')}/auth/v1/user",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "apikey": self.publishable_key,
+                },
+                timeout=20,
+            )
+        except httpx.HTTPError as exc:
+            raise RuntimeError("authentication_service_unavailable") from exc
 
         if response.status_code != 200:
-            raise PermissionError("Invalid or expired access token")
+            raise PermissionError("authentication_required")
 
-        user = response.json()
+        try:
+            user = response.json()
+        except ValueError as exc:
+            raise RuntimeError("authentication_service_unavailable") from exc
+
         user_id = user.get("id")
         if not user_id:
-            raise PermissionError("Authenticated user has no id")
+            raise PermissionError("authentication_required")
 
         return {
             "id": str(user_id),
