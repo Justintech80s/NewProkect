@@ -1,6 +1,7 @@
 import os
 import time
 import uuid
+from contextlib import asynccontextmanager
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -62,20 +63,29 @@ from .services.stem_generator import ProfessionalStemGenerator
 from .services.stem_mixer import StemMixer
 from .services.stems import StemSeparator
 from .services.usage import UsageQuotaService
+from .settings import get_settings, validate_startup
 
-app = FastAPI(title="Just Maker AI Backend", version="5.2.0")
+settings = get_settings()
 
-allowed_origins = [
-    origin.strip()
-    for origin in os.getenv(
-        "JUST_SOUNDZ_ALLOWED_ORIGINS",
-        "https://just-soundz-ai-companion.justmarsh88.chatgpt.site",
-    ).split(",")
-    if origin.strip()
-]
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    report = validate_startup(settings)
+    app.state.startup_report = report
+    if not report["valid"]:
+        raise RuntimeError("invalid_startup_configuration")
+    yield
+
+
+app = FastAPI(
+    title="Just Maker AI Backend",
+    version="5.2.0",
+    lifespan=lifespan,
+)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
+    allow_origins=settings.allowed_origins,
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
