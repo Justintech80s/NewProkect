@@ -54,6 +54,7 @@ class ModelRegistry:
         ))
 
         specs = [
+            ("replicate-gpu", "replicate-deployment", "JUST_SOUNDZ_REPLICATE_DEPLOYMENT", "JUST_SOUNDZ_REPLICATE_API_TOKEN", 5),
             ("primary-gpu", "http-worker", "JUST_SOUNDZ_PRIMARY_WORKER_URL", "JUST_SOUNDZ_PRIMARY_WORKER_TOKEN", 10),
             ("musicgen-jasco", "musicgen-jasco-worker", "JUST_SOUNDZ_MUSICGEN_WORKER_URL", "JUST_SOUNDZ_MUSICGEN_WORKER_TOKEN", 20),
             ("stable-audio", "stable-audio-worker", "JUST_SOUNDZ_STABLE_WORKER_URL", "JUST_SOUNDZ_STABLE_WORKER_TOKEN", 30),
@@ -95,6 +96,7 @@ class ModelRegistry:
                 "http-worker",
                 "musicgen-jasco-worker",
                 "stable-audio-worker",
+                "replicate-deployment",
             }:
                 continue
             try:
