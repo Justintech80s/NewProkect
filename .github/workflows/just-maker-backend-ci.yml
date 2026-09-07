@@ -159,3 +159,48 @@ jobs:
             exit 1
           fi
 
+  audio-contract:
+    name: Audio DSP mastering stems contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: just-soundz-backend
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Compile audio modules
+        run: python -m compileall -q app/services tests/test_audio_pass3.py
+
+      - name: Run Pass 3 audio regression tests
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_audio_pass3.py
+
+      - name: Verify Pass 3 audio hardening has no placeholders
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            app/services/audio_safety.py
+            app/services/rust_dsp.py
+            app/services/mastering.py
+            app/services/mastering_critic.py
+            app/services/stem_mixer.py
+          )
+          if git grep -nE 'TODO|TBD|implement later' -- "${files[@]}"; then
+            echo "Pass 3 audio files contain unfinished placeholders."
+            exit 1
+          fi
+
