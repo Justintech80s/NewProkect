@@ -25,8 +25,8 @@ class MusicBrainContextBuilder:
             sample_eligible_only=True,
         )
 
-        ref_rows = references.get("results") or []
-        eligible_rows = eligible.get("results") or []
+        ref_rows = (references.get("results") or [])[: max(1, min(limit, 50))]
+        eligible_rows = (eligible.get("results") or [])[: max(1, min(limit, 50))]
 
         bpms = [float(r["bpm"]) for r in ref_rows if r.get("bpm") is not None]
         keys = [str(r["key"]) for r in ref_rows if r.get("key")]
@@ -84,6 +84,8 @@ class MusicBrainContextBuilder:
             "references": [self._compact(r) for r in ref_rows[:limit]],
             "eligible_samples": [self._compact(r) for r in eligible_rows[:limit]],
             "related_songs": references.get("relational_graph_results") or [],
+            "retrieval": references.get("retrieval") or {},
+            "sample_retrieval": eligible.get("retrieval") or {},
         }
 
     def apply_to_plan(
@@ -109,6 +111,8 @@ class MusicBrainContextBuilder:
             "references": context.get("references", []),
             "eligible_samples": context.get("eligible_samples", []),
             "related_songs": context.get("related_songs", []),
+            "retrieval": context.get("retrieval", {}),
+            "sample_retrieval": context.get("sample_retrieval", {}),
         }
 
         enriched["production_context"] = {
