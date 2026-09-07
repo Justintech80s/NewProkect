@@ -48,3 +48,27 @@ docker run --gpus all -p 8080:8080 \
   -e JUST_MAKER_GPU_MODEL_ID=<approved-model-id> \
   -e JUST_MAKER_GPU_WORKER_TOKEN=<secret> \
   just-maker-gpu-worker
+
+## Replicate GPU deployment
+
+Just Maker can run the heavyweight music model on Replicate while keeping the normal API/backend on Vercel.
+
+### Replicate model package
+
+The GPU worker directory contains:
+
+- `cog.yaml` — Cog GPU image definition.
+- `predict.py` — Replicate prediction interface.
+- `worker.py` — existing Just Maker generation runtime and Pass 6 conditioning.
+- `.github/workflows/replicate-gpu-push.yml` — manual GitHub Action that pushes the Cog model.
+
+The model ID is intentionally not hard-coded. Configure `JUST_MAKER_GPU_MODEL_ID` on the Replicate deployment with a model whose license permits your intended use.
+
+### Main backend environment
+
+After the Replicate model has been pushed and a deployment has been created, configure the Vercel backend with:
+
+- `JUST_SOUNDZ_REPLICATE_DEPLOYMENT=owner/deployment-name`
+- `JUST_SOUNDZ_REPLICATE_API_TOKEN=<private token>`
+
+The Replicate deployment is ranked ahead of the lightweight Vercel worker. The backend checks deployment health, submits the full plan + conditioning JSON, polls long-running predictions, securely downloads the returned audio artifact, and then continues through Just Maker's existing analysis/mastering/artifact pipeline.
