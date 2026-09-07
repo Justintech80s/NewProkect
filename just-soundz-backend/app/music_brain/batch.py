@@ -41,6 +41,8 @@ class DatasetBatchIngestor:
         duplicates = 0
         errors = []
         seen = set()
+        quality_score_total = 0.0
+        quality_score_count = 0
 
         for record in records:
             processed += 1
@@ -56,6 +58,10 @@ class DatasetBatchIngestor:
                             "message": ",".join(quality["errors"]),
                         })
                     continue
+
+                confidence = quality.get("confidence") or {}
+                quality_score_total += float(confidence.get("score") or 0.0)
+                quality_score_count += 1
 
                 fingerprint = self.quality.fingerprint(candidate)
                 if deduplicate and fingerprint in seen:
@@ -100,6 +106,14 @@ class DatasetBatchIngestor:
             "rejected": rejected,
             "duplicates": duplicates,
             "errors": errors,
+            "quality": {
+                "average_confidence": round(
+                    quality_score_total / max(quality_score_count, 1),
+                    4,
+                ),
+                "validated_records": quality_score_count,
+                "error_samples_capped_at": max_error_samples,
+            },
             "status": "complete",
             "started_at": started,
             "completed_at": datetime.now(timezone.utc).isoformat(),

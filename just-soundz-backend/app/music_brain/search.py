@@ -8,6 +8,7 @@ from .graph import MusicGraph
 from .relational_graph import RelationalMusicGraph
 from ..services.local_cache import RocksLocalCache
 from ..services.cache_tuner import AdaptiveCacheTuner
+from .intelligence import DatasetIntelligence
 
 
 class MusicBrainSearch:
@@ -20,6 +21,7 @@ class MusicBrainSearch:
         self.relational_graph = RelationalMusicGraph(self.db)
         self.cache = RocksLocalCache("music-brain-search")
         self.cache_tuner = AdaptiveCacheTuner()
+        self.intelligence = DatasetIntelligence()
 
     def search(
         self,
@@ -57,6 +59,12 @@ class MusicBrainSearch:
                 limit=limit,
             )
 
+        vector_results = self.intelligence.rerank(
+            vector_results,
+            sample_eligible_only=sample_eligible_only,
+            limit=limit,
+        )
+
         graph_results = []
         relational_graph_results = []
         if vector_results:
@@ -78,6 +86,11 @@ class MusicBrainSearch:
             "results": vector_results,
             "graph_results": graph_results,
             "relational_graph_results": relational_graph_results,
+            "retrieval": {
+                "ranking": self.intelligence.VERSION,
+                "context_fingerprint": self.intelligence.context_fingerprint(vector_results),
+                "result_count": len(vector_results),
+            },
             "database_configured": self.db.configured,
             "graph_configured": self.graph.configured,
             "cache": {
