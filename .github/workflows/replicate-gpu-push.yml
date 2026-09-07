@@ -1,0 +1,42 @@
+name: Push Just Maker GPU to Replicate
+
+on:
+  workflow_dispatch:
+    inputs:
+      model_name:
+        description: 'Replicate model name, e.g. owner/just-maker-gpu'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: just-soundz-backend/gpu-worker
+    steps:
+      - name: Free disk space
+        uses: jlumbroso/free-disk-space@v1.3.1
+        with:
+          tool-cache: false
+          docker-images: false
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Cog
+        uses: replicate/setup-cog@v2
+        with:
+          token: ${{ secrets.REPLICATE_CLI_AUTH_TOKEN }}
+
+      - name: Validate Cog configuration
+        run: |
+          test -f cog.yaml
+          test -f predict.py
+          python -m py_compile predict.py prompt_compiler.py worker.py
+
+      - name: Push model
+        run: cog push "r8.im/${{ inputs.model_name }}"
