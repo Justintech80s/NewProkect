@@ -25,8 +25,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Check Rust DSP crate
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check Rust DSP production extension
         run: cargo check --locked || cargo check
 
-      - name: Run Rust DSP tests
-        run: cargo test --locked || cargo test
+      - name: Run Rust DSP tests with Python linking
+        env:
+          PYO3_PYTHON: python
+        run: cargo test --no-default-features --locked || cargo test --no-default-features
