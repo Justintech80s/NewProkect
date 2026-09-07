@@ -266,9 +266,21 @@ def generate_professional_stem_mix(plan: Dict[str, Any]) -> Dict[str, Any]:
         generated,
         corrected_arrangement,
     )
+    mix_meta_by_stem = {
+        str(item.get("stem")): item.get("technical_metadata")
+        for item in (mixed.get("stems") or [])
+        if item.get("stem")
+    }
+    generated_with_metadata = [
+        {
+            **item,
+            "technical_metadata": mix_meta_by_stem.get(str(item.get("stem"))),
+        }
+        for item in generated
+    ]
     return {
         "requested": len(professional_stems.build_requests(plan)),
-        "generated": generated,
+        "generated": generated_with_metadata,
         "mix_analysis": raw_analysis,
         "corrected_stem_arrangement": corrected_arrangement,
         "mix": mixed,
