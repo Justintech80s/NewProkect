@@ -1,6 +1,7 @@
 import pytest
 
-from app.jobs import JobStore
+import app.main as main_module
+from app.jobs import JobStore, jobs
 from app.services.job_states import JobStateError
 
 
@@ -41,3 +42,22 @@ def test_unknown_job_field_is_rejected():
     job = store.create()
     with pytest.raises(ValueError):
         store.update(job.id, mystery=True)
+
+
+def test_process_job_failure_cannot_leave_running(monkeypatch):
+    job = jobs.create(user_id="00000000-0000-0000-0000-000000000001")
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("synthetic generation failure")
+
+    monkeypatch.setattr(main_module, "run_generation", explode)
+    main_module.process_job(
+        job.id,
+        main_module.GenerateRequest(prompt="original test beat"),
+        user_id=job.user_id,
+        request_id="req-test-failure",
+    )
+    updated = jobs.get(job.id)
+    assert updated is not None
+    assert updated.status == "failed"
+    assert updated.request_id == "req-test-failure"
