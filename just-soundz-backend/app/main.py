@@ -8,7 +8,9 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 
+from .errors import AppError, register_error_handlers
 from .jobs import jobs
+from .request_context import REQUEST_ID_HEADER, normalize_request_id
 from .music_brain.batch import DatasetBatchIngestor
 from .music_brain.audio_intelligence import AudioIntelligenceEngine
 from .music_brain.context import MusicBrainContextBuilder
@@ -90,6 +92,7 @@ app.add_middleware(
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+register_error_handlers(app)
 
 planner = ProducerPlanner()
 advanced_conditioning = AdvancedConditioningPlanner()
@@ -156,7 +159,8 @@ readiness = ReadinessChecker(
 
 @app.middleware("http")
 async def request_observability(request: Request, call_next):
-    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    request_id = normalize_request_id(request.headers.get(REQUEST_ID_HEADER))
+    request.state.request_id = request_id
     started = time.perf_counter()
     try:
         response = await call_next(request)
@@ -178,7 +182,7 @@ async def request_observability(request: Request, call_next):
         except Exception:
             pass
         if "response" in locals():
-            response.headers["X-Request-ID"] = request_id
+            response.headers[REQUEST_ID_HEADER] = request_id
 
 
 class GenerateRequest(BaseModel):
@@ -577,32 +581,52 @@ def run_generation(req: GenerateRequest, user_id: str | None = None, _single_can
     }
 
 
-def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
-    jobs.update(job_id, status="running")
-    event_bus.emit(
-        os.getenv("JUST_MAKER_KAFKA_JOB_TOPIC", "justmaker.jobs"),
-        "generation.started",
-        {
-            "job_id": job_id,
-            "user_id": user_id,
-            "duration_seconds": req.duration_seconds,
-            "candidate_count": req.candidate_count,
-            "make_stems": req.make_stems,
-        },
-        key=job_id,
-    )
-    request_id = str(uuid.uuid4())
+def process_job(
+    job_id: str,
+    req: GenerateRequest,
+    user_id: str | None = None,
+    request_id: str | None = None,
+):
+    request_id = normalize_request_id(request_id)
     job_started = time.perf_counter()
-    if user_id:
-        usage_quota.record_event(
-            user_id,
-            "generation_started",
-            job_id=job_id,
-            metadata={"duration_seconds": req.duration_seconds},
-        )
-    durable_jobs.update(job_id, status="running", stage="planning", progress=0.05)
+    jobs.update(job_id, status="running", request_id=request_id)
 
     try:
+        try:
+            event_bus.emit(
+                os.getenv("JUST_MAKER_KAFKA_JOB_TOPIC", "justmaker.jobs"),
+                "generation.started",
+                {
+                    "job_id": job_id,
+                    "request_id": request_id,
+                    "user_id": user_id,
+                    "duration_seconds": req.duration_seconds,
+                    "candidate_count": req.candidate_count,
+                    "make_stems": req.make_stems,
+                },
+                key=job_id,
+            )
+        except Exception:
+            pass
+
+        if user_id:
+            try:
+                usage_quota.record_event(
+                    user_id,
+                    "generation_started",
+                    job_id=job_id,
+                    metadata={"duration_seconds": req.duration_seconds},
+                )
+            except Exception:
+                pass
+
+        durable_jobs.update(
+            job_id,
+            status="running",
+            stage="planning",
+            progress=0.05,
+            request_id=request_id,
+        )
         durable_jobs.update(job_id, stage="generating", progress=0.20)
         result = run_generation(req, user_id=user_id)
 
@@ -695,6 +719,7 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
             "generation.completed",
             {
                 "job_id": job_id,
+                "request_id": request_id,
                 "user_id": user_id,
                 "provider": (result.get("generation") or {}).get("provider"),
                 "evaluation_score": (result.get("evaluation") or {}).get("score"),
@@ -722,16 +747,21 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
             result=result,
         )
     except Exception as exc:
-        event_bus.emit(
-            os.getenv("JUST_MAKER_KAFKA_JOB_TOPIC", "justmaker.jobs"),
-            "generation.failed",
-            {
-                "job_id": job_id,
-                "user_id": user_id,
-                "error_type": exc.__class__.__name__,
-            },
-            key=job_id,
-        )
+        # Secondary telemetry must never prevent the authoritative terminal write.
+        try:
+            event_bus.emit(
+                os.getenv("JUST_MAKER_KAFKA_JOB_TOPIC", "justmaker.jobs"),
+                "generation.failed",
+                {
+                    "job_id": job_id,
+                    "request_id": request_id,
+                    "user_id": user_id,
+                    "error_type": exc.__class__.__name__,
+                },
+                key=job_id,
+            )
+        except Exception:
+            pass
         try:
             operations.record(
                 "generation_job",
@@ -746,20 +776,26 @@ def process_job(job_id: str, req: GenerateRequest, user_id: str | None = None):
             )
         except Exception:
             pass
-        jobs.update(job_id, status="failed", error=str(exc))
         if user_id:
-            usage_quota.record_event(
-                user_id,
-                "generation_failed",
-                job_id=job_id,
-                metadata={"error_type": exc.__class__.__name__},
+            try:
+                usage_quota.record_event(
+                    user_id,
+                    "generation_failed",
+                    job_id=job_id,
+                    metadata={"error_type": exc.__class__.__name__},
+                )
+            except Exception:
+                pass
+        try:
+            durable_jobs.update(
+                job_id,
+                status="failed",
+                stage="failed",
+                error=str(exc),
+                request_id=request_id,
             )
-        durable_jobs.update(
-            job_id,
-            status="failed",
-            stage="failed",
-            error=str(exc),
-        )
+        finally:
+            jobs.update(job_id, status="failed", error=str(exc), request_id=request_id)
 
 
 @app.get("/")
@@ -878,7 +914,7 @@ def require_user(authorization: Optional[str]) -> Dict[str, Any]:
 @app.get("/ready")
 def ready():
     status = readiness.check()
-    if not status["ready"]:
+    if status["status"] == "not_ready":
         raise HTTPException(status_code=503, detail=status)
     return status
 
@@ -1132,7 +1168,12 @@ def render(req: GenerateRequest):
     try:
         result = run_generation(req)
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise AppError(
+            code="generator_unavailable",
+            message="Music generation is temporarily unavailable.",
+            status_code=503,
+            retryable=True,
+        ) from exc
 
     path = result["generation"].get("audio_path")
     if not path:
@@ -1159,13 +1200,19 @@ def generate(req: GenerateRequest):
     try:
         return run_generation(req)
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise AppError(
+            code="generator_unavailable",
+            message="Music generation is temporarily unavailable.",
+            status_code=503,
+            retryable=True,
+        ) from exc
 
 
 @app.post("/v1/jobs")
 def create_job(
     req: GenerateRequest,
     background_tasks: BackgroundTasks,
+    request: Request,
     authorization: Optional[str] = Header(default=None),
 ):
     user = require_user(authorization)
@@ -1182,13 +1229,16 @@ def create_job(
             },
         )
 
-    durable = durable_jobs.create(req.model_dump(), user_id=user["id"])
+    request_id = request.state.request_id
+    durable = durable_jobs.create(
+        req.model_dump(), user_id=user["id"], request_id=request_id
+    )
 
     if durable_jobs.configured:
         job_id = durable["job_id"]
-        jobs.create_with_id(job_id, user_id=user["id"])
+        jobs.create_with_id(job_id, user_id=user["id"], request_id=request_id)
     else:
-        job = jobs.create(user_id=user["id"])
+        job = jobs.create(user_id=user["id"], request_id=request_id)
         job_id = job.id
 
     usage_quota.record_event(
@@ -1202,12 +1252,13 @@ def create_job(
         "generation.queued",
         {
             "job_id": job_id,
+            "request_id": request_id,
             "user_id": user["id"],
             "request": req.model_dump(),
         },
         key=job_id,
     )
-    background_tasks.add_task(process_job, job_id, req, user["id"])
+    background_tasks.add_task(process_job, job_id, req, user["id"], request_id)
     return {
         "job_id": job_id,
         "status": "queued",
@@ -1219,6 +1270,7 @@ def create_job(
 def retry_job(
     job_id: str,
     background_tasks: BackgroundTasks,
+    request: Request,
     authorization: Optional[str] = Header(default=None),
 ):
     user = require_user(authorization)
@@ -1253,9 +1305,16 @@ def retry_job(
         retry_count=int(original.get("retry_count") or 0) + 1,
         max_retries=int(original.get("max_retries") or 3),
         user_id=user["id"],
+        request_id=request.state.request_id,
     )
-    jobs.create_with_id(retry["job_id"], user_id=user["id"])
-    background_tasks.add_task(process_job, retry["job_id"], req, user["id"])
+    jobs.create_with_id(
+        retry["job_id"],
+        user_id=user["id"],
+        request_id=request.state.request_id,
+    )
+    background_tasks.add_task(
+        process_job, retry["job_id"], req, user["id"], request.state.request_id
+    )
     return {
         "job_id": retry["job_id"],
         "status": "queued",
