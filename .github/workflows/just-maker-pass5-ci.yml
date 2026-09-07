@@ -1,0 +1,56 @@
+name: Just Maker Pass 5 Production Readiness
+
+on:
+  push:
+    paths:
+      - "just-soundz-backend/app/services/orchestration.py"
+      - "just-soundz-backend/app/services/router.py"
+      - "just-soundz-backend/app/services/providers.py"
+      - "just-soundz-backend/gpu-worker/**"
+      - "just-soundz-backend/tests/test_gpu_pass5.py"
+      - ".github/workflows/just-maker-pass5-ci.yml"
+  pull_request:
+    paths:
+      - "just-soundz-backend/app/services/orchestration.py"
+      - "just-soundz-backend/app/services/router.py"
+      - "just-soundz-backend/app/services/providers.py"
+      - "just-soundz-backend/gpu-worker/**"
+      - "just-soundz-backend/tests/test_gpu_pass5.py"
+      - ".github/workflows/just-maker-pass5-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  pass5-production-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: just-soundz-backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - name: Compile orchestration modules
+        run: python -m compileall -q app/services/orchestration.py app/services/router.py app/services/providers.py tests/test_gpu_pass5.py
+      - name: Run Pass 5 regression tests
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_gpu_pass5.py tests/test_worker_selection.py tests/test_multimodel_ensemble.py
+      - name: Reject unfinished Pass 5 placeholders
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            app/services/orchestration.py
+            app/services/router.py
+            app/services/providers.py
+          )
+          if git grep -nE 'TODO|TBD|implement later' -- "${files[@]}"; then
+            echo "Pass 5 files contain unfinished placeholders."
+            exit 1
+          fi
