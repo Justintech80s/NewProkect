@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, List
 
 from .circuit_breaker import WorkerCircuitBreaker
 from .model_registry import WorkerConfig
+from .orchestration import OrchestrationPolicy
 from .procedural import ProceduralMusicProvider
 from .providers import (
     MusicGenJascoProvider,
@@ -14,11 +16,12 @@ from .worker_selector import WorkerSelector
 
 
 class GenerationRouter:
-    """Capability-aware generation router with ordered failover."""
+    """Capability-aware generation router with bounded health-aware failover."""
 
     def __init__(self):
         self.selector = WorkerSelector()
         self.circuit_breaker = WorkerCircuitBreaker()
+        self.policy = OrchestrationPolicy.from_env()
 
     @property
     def provider(self) -> str:
@@ -29,8 +32,18 @@ class GenerationRouter:
 
     def generate(self, plan: Dict[str, Any], variation: int = 0):
         attempts: List[Dict[str, Any]] = []
+        started_at = time.time()
 
         for worker, ranking in self.selector.rank(plan):
+            if not self.policy.should_attempt(attempts):
+                attempts.append({
+                    "worker": worker.name,
+                    "status": "skipped",
+                    "reason": "attempt_budget_exhausted",
+                    **ranking,
+                })
+                break
+
             if not self.circuit_breaker.allow(worker.name):
                 attempts.append({
                     "worker": worker.name,
@@ -59,10 +72,28 @@ class GenerationRouter:
                 })
                 continue
 
+            health = self._health(provider)
+            if not health.get("ok", False):
+                self.circuit_breaker.failure(worker.name)
+                attempts.append({
+                    "worker": worker.name,
+                    "status": "skipped",
+                    "reason": "health_check_failed",
+                    "health": health,
+                    **ranking,
+                })
+                continue
+
             try:
                 result = provider.generate(plan, variation)
                 if result.get("audio_path") or result.get("audio_url"):
                     self.circuit_breaker.success(worker.name)
+                    attempts.append({
+                        "worker": worker.name,
+                        "status": "success",
+                        "health": health,
+                        **ranking,
+                    })
                     result["routing"] = {
                         "selected_worker": worker.name,
                         "selected_kind": worker.kind,
@@ -73,6 +104,10 @@ class GenerationRouter:
                         "global_performance": ranking.get("global_performance"),
                         "contextual_performance": ranking.get("contextual_performance"),
                         "attempts": attempts,
+                        "orchestration": self.policy.audit(
+                            attempts,
+                            started_at=started_at,
+                        ),
                     }
                     return result
 
@@ -81,6 +116,7 @@ class GenerationRouter:
                     "worker": worker.name,
                     "status": "failed",
                     "reason": "no_audio_returned",
+                    "health": health,
                     **ranking,
                 })
             except Exception as exc:
@@ -89,6 +125,7 @@ class GenerationRouter:
                     "worker": worker.name,
                     "status": "failed",
                     "reason": exc.__class__.__name__,
+                    "health": health,
                     **ranking,
                 })
 
@@ -100,6 +137,10 @@ class GenerationRouter:
             "routing": {
                 "selected_worker": None,
                 "attempts": attempts,
+                "orchestration": self.policy.audit(
+                    attempts,
+                    started_at=started_at,
+                ),
             },
         }
 
@@ -117,7 +158,23 @@ class GenerationRouter:
         return {
             "workers": workers,
             "circuits": self.circuit_breaker.status(),
+            "orchestration_policy": {
+                "version": "pass5-v1",
+                "max_worker_attempts": self.policy.max_worker_attempts,
+                "health_timeout_seconds": self.policy.health_timeout_seconds,
+                "retryable_failures": self.policy.retryable_failures,
+            },
         }
+
+    def _health(self, provider) -> Dict[str, Any]:
+        health = getattr(provider, "health", None)
+        if health is None:
+            return {"ok": True, "mode": "local"}
+        try:
+            result = health(timeout_seconds=self.policy.health_timeout_seconds)
+            return result if isinstance(result, dict) else {"ok": bool(result)}
+        except Exception as exc:
+            return {"ok": False, "reason": exc.__class__.__name__}
 
     def _provider_for(self, worker: WorkerConfig):
         if worker.kind == "built-in-procedural":
