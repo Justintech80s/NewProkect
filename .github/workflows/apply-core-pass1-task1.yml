@@ -1,0 +1,49 @@
+name: Apply Core Pass 1 Task 1
+
+on:
+  push:
+    branches:
+      - just-maker-core-backend-pass1
+    paths:
+      - ".github/workflows/apply-core-pass1-task1.yml"
+      - "just-soundz-backend/scripts/apply_core_pass1_task1.py"
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: just-maker-core-backend-pass1
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        working-directory: just-soundz-backend
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - name: Apply deterministic patch
+        working-directory: just-soundz-backend
+        run: python scripts/apply_core_pass1_task1.py
+      - name: Verify Task 1 tests
+        working-directory: just-soundz-backend
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_settings.py tests/test_api_smoke.py
+      - name: Commit patched application boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No patch changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add just-soundz-backend/app/main.py
+          git commit -m "feat: wire typed settings into application startup"
+          git push origin HEAD:just-maker-core-backend-pass1
