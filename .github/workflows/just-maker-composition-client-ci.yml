@@ -1,0 +1,29 @@
+name: Just Maker Composition Client CI
+
+on:
+  push:
+    paths:
+      - "just-soundz-backend/frontend-integration/**"
+      - ".github/workflows/just-maker-composition-client-ci.yml"
+  pull_request:
+    paths:
+      - "just-soundz-backend/frontend-integration/**"
+      - ".github/workflows/just-maker-composition-client-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  composition-client:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: just-soundz-backend/frontend-integration
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Test Composition API client
+        run: npm test
