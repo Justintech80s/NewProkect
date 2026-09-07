@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test composition-client.test.js"
+    "test": "node --test composition-client.test.js && npm run typecheck",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
   }
 }
