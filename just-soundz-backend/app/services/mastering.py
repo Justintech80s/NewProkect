@@ -1,17 +1,27 @@
 from __future__ import annotations
 
 import tempfile
+import uuid
 import wave
 from pathlib import Path
 from typing import Dict
 
 import numpy as np
 
+from .audio_safety import (
+    AudioValidationError,
+    ensure_output_safe,
+    validate_audio_array,
+    validate_wav_path,
+)
 from .rust_dsp import RustDSP
 
 
 class MasteringEngine:
-    """Mastering chain with optional Rust acceleration and NumPy fallback."""
+    """Deterministic mastering chain with optional Rust acceleration."""
+
+    OUTPUT_LIMIT = 0.999
+    MAX_CORRECTIVE_PASSES = 1
 
     def __init__(self):
         self.dsp = RustDSP()
@@ -23,85 +33,120 @@ class MasteringEngine:
         target_rms_db: float = -11.0,
     ) -> Dict[str, object]:
         path = Path(audio_path)
+        validate_wav_path(path)
         audio, sr = self._read_wav(path)
+        input_meta = validate_audio_array(audio, sr)
 
-        if not len(audio):
-            return {"audio_path": audio_path, "mastered": False, "reason": "empty_audio"}
+        original_resolved = path.resolve()
+        try:
+            processed = self._process_array(
+                audio,
+                sr,
+                target_peak_db=target_peak_db,
+                target_rms_db=target_rms_db,
+            )
+            output_meta = validate_audio_array(processed, sr)
+            processed = ensure_output_safe(processed, limit=self.OUTPUT_LIMIT)
+            output_meta = validate_audio_array(processed, sr)
 
-        # Remove DC offset per channel.
-        audio = self.dsp.remove_dc(audio)
+            out = (
+                Path(tempfile.gettempdir())
+                / f"{path.stem}-mastered-{uuid.uuid4().hex[:12]}.wav"
+            )
+            if out.resolve() == original_resolved:
+                raise RuntimeError("master_output_must_not_replace_source")
+            self._write_wav(out, processed, sr)
+            if not out.exists() or out.stat().st_size <= 44:
+                raise RuntimeError("master_output_missing")
+        except Exception:
+            # The source render is never modified or removed by this engine.
+            if not path.exists() or path.resolve() != original_resolved:
+                raise RuntimeError("source_render_integrity_violation")
+            raise
 
-        # Gentle spectral cleanup and bus compression.
-        audio = self.dsp.high_pass(audio, sr, 25.0)
-        pre_rms = float(np.sqrt(np.mean(audio * audio) + 1e-9))
-        pre_rms_db = 20.0 * np.log10(pre_rms + 1e-9)
-        makeup_db = max(-4.0, min(5.0, target_rms_db - pre_rms_db))
-        audio = self.dsp.apply_gain_db(audio, makeup_db)
-        audio = self.dsp.soft_clip(audio, 1.22)
-
-        # Peak normalization.
-        audio = self.dsp.normalize_peak(audio, target_peak_db)
-
-        # Short fade in/out prevents edge clicks.
-        fade = min(int(sr * 0.02), len(audio) // 2)
-        if fade > 1:
-            ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
-            if audio.ndim == 2:
-                ramp = ramp[:, None]
-            audio[:fade] *= ramp
-            audio[-fade:] *= ramp[::-1]
-
-        out = Path(tempfile.gettempdir()) / f"{path.stem}-mastered.wav"
-        self._write_wav(out, audio.astype(np.float32), sr)
-
-        rms = float(np.sqrt(np.mean(audio * audio) + 1e-9))
-        crest = float((np.max(np.abs(audio)) + 1e-9) / (rms + 1e-9))
+        rms = float(np.sqrt(np.mean(processed * processed) + 1e-12))
+        peak = float(np.max(np.abs(processed)) or 0.0)
+        crest = float(peak / max(rms, 1e-12))
 
         return {
             "audio_path": str(out),
+            "source_audio_path": str(path),
             "mastered": True,
             "sample_rate": sr,
-            "peak_dbfs": round(20.0 * np.log10(float(np.max(np.abs(audio))) + 1e-9), 2),
-            "rms_dbfs": round(20.0 * np.log10(rms + 1e-9), 2),
+            "channels": output_meta.channels,
+            "duration_seconds": round(output_meta.duration_seconds, 6),
+            "peak_dbfs": round(output_meta.peak_dbfs, 2),
+            "rms_dbfs": round(output_meta.rms_dbfs, 2),
             "crest_factor": round(crest, 3),
-            "target_peak_dbfs": target_peak_db,
-            "target_rms_dbfs": target_rms_db,
-            "makeup_gain_db": round(makeup_db, 2),
-            "clipping_detected": bool(np.any(np.abs(audio) >= 0.999)),
+            "target_peak_dbfs": float(target_peak_db),
+            "target_rms_dbfs": float(target_rms_db),
+            "makeup_gain_db": round(float(self._last_makeup_db), 2),
+            "clipping_detected": bool(peak >= self.OUTPUT_LIMIT),
+            "input_metadata": input_meta.as_dict(),
+            "technical_metadata": output_meta.as_dict(),
             "dsp": self.dsp.status(),
         }
 
+    def _process_array(
+        self,
+        audio: np.ndarray,
+        sr: int,
+        *,
+        target_peak_db: float,
+        target_rms_db: float,
+    ) -> np.ndarray:
+        validate_audio_array(audio, sr)
+        work = np.asarray(audio, dtype=np.float32).copy()
+
+        work = self.dsp.remove_dc(work)
+        work = self.dsp.high_pass(work, sr, 25.0)
+        validate_audio_array(work, sr)
+
+        pre_rms_db = self.dsp.rms_dbfs(work)
+        makeup_db = max(-4.0, min(5.0, float(target_rms_db) - pre_rms_db))
+        self._last_makeup_db = makeup_db
+        work = self.dsp.apply_gain_db(work, makeup_db)
+        work = self.dsp.soft_clip(work, 1.22)
+        work = self.dsp.normalize_peak(work, target_peak_db)
+        work = ensure_output_safe(work, limit=self.OUTPUT_LIMIT)
+
+        fade = min(int(sr * 0.02), len(work) // 2)
+        if fade > 1:
+            ramp = np.linspace(0.0, 1.0, fade, dtype=np.float32)
+            if work.ndim == 2:
+                ramp = ramp[:, None]
+            work[:fade] *= ramp
+            work[-fade:] *= ramp[::-1]
+
+        return ensure_output_safe(work, limit=self.OUTPUT_LIMIT)
+
     def _read_wav(self, path: Path):
-        with wave.open(str(path), "rb") as wf:
-            frames = wf.readframes(wf.getnframes())
-            sr = wf.getframerate()
-            width = wf.getsampwidth()
-            channels = wf.getnchannels()
+        try:
+            with wave.open(str(path), "rb") as wf:
+                frames = wf.readframes(wf.getnframes())
+                sr = wf.getframerate()
+                width = wf.getsampwidth()
+                channels = wf.getnchannels()
+        except (wave.Error, EOFError) as exc:
+            raise AudioValidationError("malformed_wav") from exc
 
         if width != 2:
-            raise ValueError("Mastering engine currently expects 16-bit PCM WAV.")
+            raise AudioValidationError("unsupported_sample_width")
+        if channels not in {1, 2}:
+            raise AudioValidationError("unsupported_channel_count")
 
         audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
         audio = audio.reshape(-1, channels)
+        validate_audio_array(audio, sr)
         return audio, sr
 
     def _write_wav(self, path: Path, audio: np.ndarray, sr: int):
-        pcm = np.clip(audio * 32767.0, -32768, 32767).astype(np.int16)
-        channels = audio.shape[1] if audio.ndim == 2 else 1
+        validate_audio_array(audio, sr)
+        safe = ensure_output_safe(audio, limit=self.OUTPUT_LIMIT)
+        pcm = np.clip(safe * 32767.0, -32768, 32767).astype(np.int16)
+        channels = safe.shape[1] if safe.ndim == 2 else 1
         with wave.open(str(path), "wb") as wf:
             wf.setnchannels(channels)
             wf.setsampwidth(2)
             wf.setframerate(sr)
             wf.writeframes(pcm.tobytes())
-
-    def _high_pass(self, audio: np.ndarray, sr: int, cutoff_hz: float) -> np.ndarray:
-        if len(audio) < 2:
-            return audio
-        rc = 1.0 / (2.0 * np.pi * cutoff_hz)
-        dt = 1.0 / sr
-        alpha = rc / (rc + dt)
-        out = np.empty_like(audio)
-        out[0] = audio[0]
-        for i in range(1, len(audio)):
-            out[i] = alpha * (out[i - 1] + audio[i] - audio[i - 1])
-        return out
