@@ -204,3 +204,50 @@ jobs:
             exit 1
           fi
 
+  music-brain-contract:
+    name: Music Brain dataset intelligence contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: just-soundz-backend
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Compile Music Brain modules
+        run: python -m compileall -q app/music_brain tests/test_music_brain_pass4.py
+
+      - name: Run Pass 4 Music Brain regression tests
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_music_brain_pass4.py
+
+      - name: Verify Pass 4 Music Brain has no placeholders
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            app/music_brain/intelligence.py
+            app/music_brain/dataset_quality.py
+            app/music_brain/ingestion.py
+            app/music_brain/search.py
+            app/music_brain/context.py
+            app/music_brain/audio_intelligence.py
+            app/music_brain/rights.py
+          )
+          if git grep -nE 'TODO|TBD|implement later' -- "${files[@]}"; then
+            echo "Pass 4 Music Brain files contain unfinished placeholders."
+            exit 1
+          fi
+
