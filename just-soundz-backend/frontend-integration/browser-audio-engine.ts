@@ -16,7 +16,7 @@ export type LocalDspMetrics = {
 };
 
 export type LocalDspResult = {
-  samples: Float32Array;
+  samples: Float32Array<ArrayBufferLike>;
   metrics: LocalDspMetrics;
 };
 
@@ -52,7 +52,7 @@ export class JustMakerBrowserAudioEngine {
   }
 
   async processInterleaved(
-    samples: Float32Array,
+    samples: Float32Array<ArrayBufferLike>,
     {
       channels,
       sampleRate,
@@ -127,7 +127,7 @@ export class JustMakerBrowserAudioEngine {
     return context.decodeAudioData(bytes.slice(0));
   }
 
-  async audioBufferToInterleaved(buffer: AudioBuffer): Promise<Float32Array> {
+  async audioBufferToInterleaved(buffer: AudioBuffer): Promise<Float32Array<ArrayBufferLike>> {
     const channels = buffer.numberOfChannels;
     const frames = buffer.length;
     const interleaved = new Float32Array(frames * channels);
@@ -142,7 +142,7 @@ export class JustMakerBrowserAudioEngine {
   }
 
   async interleavedToAudioBuffer(
-    samples: Float32Array,
+    samples: Float32Array<ArrayBufferLike>,
     channels: number,
     sampleRate: number,
   ): Promise<AudioBuffer> {
