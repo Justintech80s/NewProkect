@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test composition-client.test.js && tsx --test local-sequencer.test.ts && npm run typecheck",
+    "test": "node --test composition-client.test.js && tsx --test local-sequencer.test.ts local-sample-chopper.test.ts && npm run typecheck",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
