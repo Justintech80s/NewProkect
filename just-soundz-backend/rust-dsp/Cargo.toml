@@ -1,15 +1,17 @@
 [package]
 name = "just-maker-dsp"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [lib]
 name = "just_maker_dsp"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [features]
 default = ["python-extension"]
-python-extension = ["pyo3/extension-module"]
+python-extension = ["dep:pyo3", "pyo3/extension-module"]
+wasm = ["dep:wasm-bindgen"]
 
 [dependencies]
-pyo3 = { version = "0.22" }
+pyo3 = { version = "0.22", optional = true }
+wasm-bindgen = { version = "0.2", optional = true }

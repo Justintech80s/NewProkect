@@ -24,5 +24,6 @@ def test_gpu_worker_status_does_not_load_model(monkeypatch, tmp_path):
 
     status = worker.status()
 
-    assert status["configured"] is True
+    assert status["model_configured"] is True
     assert status["loaded"] is False
+    assert status["configured"] is status["runtime_available"]

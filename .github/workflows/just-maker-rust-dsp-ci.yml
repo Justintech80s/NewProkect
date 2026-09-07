@@ -25,14 +25,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Check Rust DSP production extension
+      - name: Check Rust DSP Python extension
         run: cargo check --locked || cargo check
 
-      - name: Run Rust DSP tests with Python linking
+      - name: Run shared Rust DSP tests
         env:
           PYO3_PYTHON: python
         run: cargo test --no-default-features --locked || cargo test --no-default-features
+
+      - name: Check browser WebAssembly target
+        run: cargo check --target wasm32-unknown-unknown --no-default-features --features wasm
+
+      - name: Verify mutually exclusive bindings compile
+        run: |
+          cargo check --no-default-features
+          cargo check --features python-extension
