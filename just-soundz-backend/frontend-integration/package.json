@@ -1,0 +1,8 @@
+{
+  "name": "just-maker-composition-integration",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test composition-client.test.js"
+  }
+}
