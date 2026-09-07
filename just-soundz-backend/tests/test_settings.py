@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from app.settings import AppSettings, validate_startup
 
 
@@ -8,6 +11,18 @@ def test_allowed_origins_are_normalized():
     assert settings.allowed_origins == ["https://a.example", "https://b.example"]
 
 
+def test_blank_allowed_origins_are_rejected():
+    with pytest.raises(ValidationError):
+        AppSettings(JUST_SOUNDZ_ALLOWED_ORIGINS=" , ")
+
+
+def test_ensemble_worker_configuration_is_centralized():
+    settings = AppSettings(
+        JUST_MAKER_ENSEMBLE_WORKERS="alpha|http-worker|URL|TOKEN|10; beta|stable-audio-worker|URL2|TOKEN2|20"
+    )
+    assert len(settings.ensemble_workers) == 2
+
+
 def test_startup_reports_missing_external_worker_without_crashing_dev():
     settings = AppSettings(
         JUST_MAKER_ENVIRONMENT="development",
@@ -15,6 +30,7 @@ def test_startup_reports_missing_external_worker_without_crashing_dev():
         JUST_SOUNDZ_PRIMARY_WORKER_URL=None,
         JUST_SOUNDZ_MUSICGEN_WORKER_URL=None,
         JUST_SOUNDZ_STABLE_WORKER_URL=None,
+        JUST_MAKER_ENSEMBLE_WORKERS="",
     )
     report = validate_startup(settings)
     assert report["valid"] is True
@@ -28,6 +44,7 @@ def test_production_can_require_external_generator():
         JUST_SOUNDZ_PRIMARY_WORKER_URL=None,
         JUST_SOUNDZ_MUSICGEN_WORKER_URL=None,
         JUST_SOUNDZ_STABLE_WORKER_URL=None,
+        JUST_MAKER_ENSEMBLE_WORKERS="",
     )
     report = validate_startup(settings)
     assert report["valid"] is False
