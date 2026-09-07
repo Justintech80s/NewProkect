@@ -24,16 +24,52 @@ class RemoteWorkerProvider(MusicProvider):
         self.base_url = base_url.rstrip("/")
         self.token = token
 
+    def _headers(self) -> Dict[str, str]:
+        return {"Authorization": f"Bearer {self.token}"} if self.token else {}
+
+    def health(self, timeout_seconds: float = 2.5) -> Dict[str, Any]:
+        import httpx
+
+        timeout = max(0.25, min(float(timeout_seconds), 30.0))
+        try:
+            response = httpx.get(
+                f"{self.base_url}/health",
+                headers=self._headers(),
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            worker = payload.get("worker") if isinstance(payload, dict) else {}
+            configured = (
+                bool(worker.get("configured", True))
+                if isinstance(worker, dict)
+                else True
+            )
+            return {
+                "ok": bool(payload.get("ok", True)) and configured,
+                "configured": configured,
+                "status_code": response.status_code,
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "configured": False,
+                "reason": exc.__class__.__name__,
+            }
+
     def generate(self, plan: Dict[str, Any], variation: int = 0) -> Dict[str, Any]:
         import httpx
 
-        headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
+        headers = self._headers()
         payload = {
             "plan": plan,
             "conditioning": plan.get("conditioning") or {},
             "variation": variation,
         }
-        generation_timeout = float(os.getenv("JUST_MAKER_WORKER_TIMEOUT_SECONDS", "600"))
+        generation_timeout = max(
+            1.0,
+            min(float(os.getenv("JUST_MAKER_WORKER_TIMEOUT_SECONDS", "600")), 1800.0),
+        )
         response = httpx.post(
             f"{self.base_url}/generate",
             json=payload,
@@ -47,7 +83,10 @@ class RemoteWorkerProvider(MusicProvider):
         artifact_filename = data.get("artifact_filename")
 
         if not audio_path and not audio_url and artifact_filename:
-            artifact_timeout = float(os.getenv("JUST_MAKER_ARTIFACT_TIMEOUT_SECONDS", "120"))
+            artifact_timeout = max(
+                1.0,
+                min(float(os.getenv("JUST_MAKER_ARTIFACT_TIMEOUT_SECONDS", "120")), 600.0),
+            )
             artifact_response = httpx.get(
                 f"{self.base_url}/artifacts/{artifact_filename}",
                 headers=headers,
