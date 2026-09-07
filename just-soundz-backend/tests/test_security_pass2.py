@@ -139,3 +139,40 @@ def test_malformed_job_id_is_404_not_database_error(monkeypatch):
         headers={"Authorization": "Bearer opaque"},
     )
     assert response.status_code == 404
+
+
+@pytest.mark.parametrize(
+    "method,path,json_body",
+    [
+        ("GET", "/v1/preferences", None),
+        ("GET", "/v1/creative-memory", None),
+        ("GET", "/v1/usage", None),
+        ("GET", f"/v1/jobs/{uuid.uuid4()}", None),
+        ("POST", f"/v1/jobs/{uuid.uuid4()}/retry", None),
+        ("POST", f"/v1/jobs/{uuid.uuid4()}/feedback", {"rating": 5, "action": "like"}),
+        (
+            "POST",
+            f"/v1/jobs/{uuid.uuid4()}/artifacts/{uuid.uuid4()}/signed-url",
+            None,
+        ),
+        (
+            "POST",
+            "/v1/jobs",
+            {"prompt": "original secure test instrumental", "duration_seconds": 60},
+        ),
+    ],
+)
+def test_user_scoped_routes_require_authentication(monkeypatch, method, path, json_body):
+    monkeypatch.setattr(
+        main_module.user_auth,
+        "get_user",
+        lambda authorization: (_ for _ in ()).throw(PermissionError("authentication_required")),
+    )
+    response = client.request(method, path, json=json_body)
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "authentication_required"
+
+
+def test_v1_responses_are_not_cacheable():
+    response = client.get("/v1/generation-workers")
+    assert response.headers["Cache-Control"] == "no-store"
