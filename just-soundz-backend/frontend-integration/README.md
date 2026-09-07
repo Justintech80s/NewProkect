@@ -75,3 +75,31 @@ The client is ready to connect once two runtime values exist:
 2. a signed-in user session that can supply a Supabase bearer token.
 
 Professional audio output still requires at least one real configured GPU generation worker behind the Just Maker router.
+
+
+## Free Engine browser DSP
+
+The browser integration now includes a local TypeScript/Web Audio engine that can load the Rust DSP WebAssembly package created by the Rust/WASM build.
+
+```ts
+import { JustMakerBrowserAudioEngine } from "./browser-audio-engine.js";
+
+const engine = new JustMakerBrowserAudioEngine({
+  wasmLoader: () => import("./pkg/just_maker_dsp.js"),
+});
+
+const decoded = await engine.decodeAudioBytes(await file.arrayBuffer());
+const { buffer, metrics } = await engine.processAudioBuffer(decoded, {
+  removeDc: true,
+  highPassHz: 24,
+  softClipDrive: 1.18,
+  normalizePeakDb: -1,
+});
+
+await engine.play(buffer);
+console.log(metrics);
+```
+
+This layer does not alter the current Composition UI. It provides reusable local audio services for later free-engine steps: browser rendering, humanized sequencing, sample-chop processing, local mastering and WAV export.
+
+The browser receives no service-role, GPU, Kafka or database secrets. DSP runs on the user's own device.

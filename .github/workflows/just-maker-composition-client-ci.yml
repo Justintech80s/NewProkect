@@ -25,5 +25,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Test Composition API client
+      - name: Install browser engine tooling
+        run: npm install --no-audit --no-fund
+      - name: Test Composition API client and browser audio types
         run: npm test
