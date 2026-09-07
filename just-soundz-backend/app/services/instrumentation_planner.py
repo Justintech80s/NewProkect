@@ -4,14 +4,23 @@ from typing import Any, Dict, List
 
 
 class InstrumentationPlanner:
-    """Chooses instrument roles using Production DNA + Music Brain context."""
+    """Chooses instrument roles using explicit user intent + Production DNA + Music Brain."""
 
     def build(self, plan: Dict[str, Any]) -> Dict[str, Any]:
         dna = plan.get("producer_dna") or {}
         archetype = dna.get("archetype", "modern_minimal")
         context = plan.get("production_context") or {}
+        performance = plan.get("performance") or {}
+        sampling = plan.get("sampling") or {}
 
         suggested = [str(x) for x in (context.get("instruments") or [])][:8]
+        explicit: List[str] = []
+        if performance.get("live_drums"):
+            explicit.append("human-played acoustic drum kit")
+        if performance.get("live_bass"):
+            explicit.append("live electric bass guitar")
+        if sampling.get("requested"):
+            explicit.append("chopped cleared sample texture")
 
         defaults = {
             "polished_west_coast": [
@@ -44,7 +53,7 @@ class InstrumentationPlanner:
         }
 
         instruments: List[str] = []
-        for item in suggested + defaults.get(archetype, defaults["modern_minimal"]):
+        for item in explicit + suggested + defaults.get(archetype, defaults["modern_minimal"]):
             if item not in instruments:
                 instruments.append(item)
 
@@ -52,6 +61,7 @@ class InstrumentationPlanner:
             "archetype": archetype,
             "primary": instruments[:5],
             "secondary": instruments[5:10],
+            "explicit_user_instruments": explicit,
             "bass_prominence": dna.get("bass_prominence", 0.75),
             "arrangement_density": dna.get("arrangement_density", 0.50),
             "mix_polish": dna.get("mix_polish", 0.80),
