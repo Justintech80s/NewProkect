@@ -103,3 +103,18 @@ console.log(metrics);
 This layer does not alter the current Composition UI. It provides reusable local audio services for later free-engine steps: browser rendering, humanized sequencing, sample-chop processing, local mastering and WAV export.
 
 The browser receives no service-role, GPU, Kafka or database secrets. DSP runs on the user's own device.
+
+
+## Free Engine Step 3: local sequencing
+
+The browser layer now includes a deterministic local beat sequencer and Web Audio renderer.
+
+It generates:
+- 16-step drum patterns with swing and bounded microtiming;
+- velocity humanization and probabilistic ghost notes;
+- section-specific patterns rather than one copied loop;
+- bass notes tied primarily to kick positions and scale tones;
+- intro, verses, hooks, breakdown and outro with different density/energy;
+- deterministic seeds so the same seed can reproduce a beat plan.
+
+The renderer schedules drum sample playback and a lightweight synthesized bass directly through Web Audio. This is intended as the free CPU/browser path and does not require GPU hosting.
