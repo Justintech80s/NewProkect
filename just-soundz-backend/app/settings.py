@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -47,19 +47,37 @@ class AppSettings(BaseSettings):
         default=None,
         validation_alias="JUST_SOUNDZ_STABLE_WORKER_URL",
     )
+    ensemble_workers_raw: str = Field(
+        default="",
+        validation_alias="JUST_MAKER_ENSEMBLE_WORKERS",
+    )
+
+    @field_validator("allowed_origins_raw")
+    @classmethod
+    def reject_blank_origins(cls, value: str) -> str:
+        if not any(part.strip() for part in value.split(",")):
+            raise ValueError("at least one allowed origin is required")
+        return value
 
     @property
     def allowed_origins(self) -> list[str]:
-        origins = [
+        return [
             value.strip()
             for value in self.allowed_origins_raw.split(",")
             if value.strip()
         ]
-        return origins or [DEFAULT_ALLOWED_ORIGIN]
+
+    @property
+    def ensemble_workers(self) -> list[str]:
+        return [
+            value.strip()
+            for value in self.ensemble_workers_raw.split(";")
+            if value.strip()
+        ]
 
     @property
     def external_worker_urls(self) -> list[str]:
-        return [
+        direct = [
             value
             for value in (
                 self.primary_worker_url,
@@ -68,6 +86,7 @@ class AppSettings(BaseSettings):
             )
             if value
         ]
+        return [*direct, *self.ensemble_workers]
 
 
 @lru_cache(maxsize=1)
@@ -76,12 +95,7 @@ def get_settings() -> AppSettings:
 
 
 def validate_startup(settings: AppSettings) -> dict[str, Any]:
-    """Classify startup configuration without exposing secrets.
-
-    Development/test environments remain bootable when optional external
-    infrastructure is absent. Production may require an external generator
-    explicitly through JUST_MAKER_REQUIRE_EXTERNAL_GENERATOR.
-    """
+    """Classify startup configuration without exposing secrets."""
 
     fatal: list[str] = []
     degraded: list[str] = []
