@@ -10,6 +10,7 @@ from .procedural import ProceduralMusicProvider
 from .providers import (
     MusicGenJascoProvider,
     RemoteWorkerProvider,
+    ReplicateDeploymentProvider,
     StableAudioProvider,
 )
 from .worker_selector import WorkerSelector
@@ -179,6 +180,8 @@ class GenerationRouter:
     def _provider_for(self, worker: WorkerConfig):
         if worker.kind == "built-in-procedural":
             return ProceduralMusicProvider()
+        if worker.kind == "replicate-deployment":
+            return ReplicateDeploymentProvider(worker.url or "", worker.token)
         if worker.kind == "http-worker":
             return RemoteWorkerProvider(worker.url or "", worker.token)
         if worker.kind == "musicgen-jasco-worker":
