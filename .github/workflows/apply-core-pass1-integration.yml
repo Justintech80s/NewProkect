@@ -1,0 +1,57 @@
+name: Apply Core Pass 1 Integration
+
+on:
+  push:
+    branches:
+      - just-maker-core-backend-pass1
+    paths:
+      - ".github/workflows/apply-core-pass1-integration.yml"
+      - "just-soundz-backend/scripts/apply_core_pass1_integration.py"
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: just-maker-core-backend-pass1
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        working-directory: just-soundz-backend
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+      - name: Apply deterministic integration patch
+        working-directory: just-soundz-backend
+        run: python scripts/apply_core_pass1_integration.py
+      - name: Compile backend
+        working-directory: just-soundz-backend
+        run: python -m compileall -q app tests
+      - name: Run Pass 1 focused tests
+        working-directory: just-soundz-backend
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_settings.py tests/test_job_states.py tests/test_jobs.py tests/test_request_context.py tests/test_error_contract.py tests/test_readiness.py tests/test_api_smoke.py
+      - name: Run full backend suite
+        working-directory: just-soundz-backend
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests
+      - name: Commit integrated application boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No integration changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add just-soundz-backend/app/main.py
+          git commit -m "feat: integrate core backend hardening contracts"
+          git push origin HEAD:just-maker-core-backend-pass1
