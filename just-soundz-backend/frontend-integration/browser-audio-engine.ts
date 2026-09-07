@@ -82,7 +82,7 @@ export class JustMakerBrowserAudioEngine {
     const rmsDbfsBefore = dsp.rms_dbfs_wasm(samples);
     const peakDbfsBefore = dsp.peak_dbfs_wasm(samples);
 
-    let output = new Float32Array(samples);
+    let output: Float32Array<ArrayBufferLike> = new Float32Array(samples);
 
     if (options.removeDc !== false) {
       output = dsp.remove_dc_interleaved_wasm(output, channels);
