@@ -118,3 +118,20 @@ It generates:
 - deterministic seeds so the same seed can reproduce a beat plan.
 
 The renderer schedules drum sample playback and a lightweight synthesized bass directly through Web Audio. This is intended as the free CPU/browser path and does not require GPU hosting.
+
+
+## Free Engine Step 4: local sample chopping
+
+The browser engine now supports transient-aware slicing of user-supplied source audio and creates section-specific chop arrangements locally.
+
+Capabilities:
+- amplitude/energy transient detection with bounded slice count;
+- short chop reordering instead of static loop playback;
+- per-chop pitch changes;
+- optional reverse chops;
+- gated slice lengths and deliberate silence gaps;
+- different chop sequences for intro, verse, hook, breakdown and outro;
+- deterministic seeds for reproducible variations;
+- Web Audio scheduling with local playback-rate pitch shifting.
+
+The local chopper requires an explicit rights attestation before a plan can be built. It is intended for audio the user owns, has cleared, or is licensed to use.
