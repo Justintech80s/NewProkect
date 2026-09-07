@@ -8,6 +8,8 @@ from .graph import MusicGraph
 from .production_profiles import ProductionProfileStore
 from .relational_graph import RelationalMusicGraph
 from .rights import SampleRightsEngine
+from .dataset_quality import DatasetQualityGate
+from .intelligence import DatasetIntelligence
 from ..services.event_bus import KafkaEventBus
 
 
@@ -22,9 +24,20 @@ class MusicIngestionPipeline:
         self.relational_graph = RelationalMusicGraph(self.db)
         self.production_profiles = ProductionProfileStore(self.db)
         self.event_bus = KafkaEventBus()
+        self.quality = DatasetQualityGate()
+        self.intelligence = DatasetIntelligence()
 
     def ingest(self, record: Dict[str, Any]) -> Dict[str, Any]:
         normalized = self._normalize(record)
+        quality = self.quality.validate(normalized)
+        if not quality["valid"]:
+            raise ValueError("dataset_quality:" + ",".join(quality["errors"]))
+
+        normalized["metadata"]["dataset_intelligence"] = {
+            "quality_warnings": quality.get("warnings", []),
+            "confidence": quality.get("confidence", {}),
+            "fingerprint": self.quality.fingerprint(normalized),
+        }
         db_result = self.db.upsert_song(normalized)
 
         rights = normalized.get("rights") or {"status": "unknown"}
@@ -35,7 +48,10 @@ class MusicIngestionPipeline:
             self.db.set_rights(song_id, rights)
 
             semantic_text = self._semantic_text(normalized)
-            embedding = self.embeddings.text_embedding(semantic_text)
+            embedding = self.intelligence.validate_embedding(
+                self.embeddings.text_embedding(semantic_text),
+                expected_dimension=self.embeddings.dimension,
+            )
             self.db.set_embedding(song_id, embedding)
 
             provenance = (
@@ -80,6 +96,7 @@ class MusicIngestionPipeline:
             "relational_graph": relational_graph_result,
             "production_profile": profile,
             "rights": rights_eval,
+            "dataset_quality": quality,
         }
 
     def _normalize(self, r: Dict[str, Any]) -> Dict[str, Any]:
@@ -96,14 +113,14 @@ class MusicIngestionPipeline:
             "release_year": r.get("release_year"),
             "bpm": r.get("bpm"),
             "musical_key": r.get("musical_key"),
-            "genres": list(r.get("genres") or []),
-            "mood": list(r.get("mood") or []),
-            "instruments": list(r.get("instruments") or []),
-            "producers": list(r.get("producers") or []),
-            "writers": list(r.get("writers") or []),
-            "performers": list(r.get("performers") or []),
-            "techniques": list(r.get("techniques") or []),
-            "texture_tags": list(r.get("texture_tags") or []),
+            "genres": self.intelligence.normalize_tags(r.get("genres") or []),
+            "mood": self.intelligence.normalize_tags(r.get("mood") or []),
+            "instruments": self.intelligence.normalize_tags(r.get("instruments") or []),
+            "producers": self.intelligence.normalize_tags(r.get("producers") or []),
+            "writers": self.intelligence.normalize_tags(r.get("writers") or []),
+            "performers": self.intelligence.normalize_tags(r.get("performers") or []),
+            "techniques": self.intelligence.normalize_tags(r.get("techniques") or []),
+            "texture_tags": self.intelligence.normalize_tags(r.get("texture_tags") or []),
             "metadata": dict(r.get("metadata") or {}),
             "rights": dict(r.get("rights") or {"status": "unknown"}),
         }
