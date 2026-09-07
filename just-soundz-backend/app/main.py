@@ -2,7 +2,7 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -10,6 +10,8 @@ from typing import Optional, Dict, Any
 
 from .errors import AppError, register_error_handlers
 from .jobs import jobs
+from .ownership import owned_job
+from .security import PUBLIC_ENDPOINTS, apply_security_headers, normalize_uuid
 from .request_context import REQUEST_ID_HEADER, normalize_request_id
 from .music_brain.batch import DatasetBatchIngestor
 from .music_brain.audio_intelligence import AudioIntelligenceEngine
@@ -183,6 +185,9 @@ async def request_observability(request: Request, call_next):
             pass
         if "response" in locals():
             response.headers[REQUEST_ID_HEADER] = request_id
+            apply_security_headers(response)
+            if request.url.path.startswith("/v1/"):
+                response.headers.setdefault("Cache-Control", "no-store")
 
 
 class GenerateRequest(BaseModel):
@@ -905,9 +910,19 @@ def require_user(authorization: Optional[str]) -> Dict[str, Any]:
     try:
         return user_auth.get_user(authorization)
     except PermissionError as exc:
-        raise HTTPException(status_code=401, detail=str(exc)) from exc
+        raise AppError(
+            code="authentication_required",
+            message="Authentication is required.",
+            status_code=401,
+            retryable=False,
+        ) from exc
     except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
+        raise AppError(
+            code="service_unavailable",
+            message="Authentication service is temporarily unavailable.",
+            status_code=503,
+            retryable=True,
+        ) from exc
 
 
 
@@ -1063,7 +1078,12 @@ def save_generation_feedback(
 ):
     user = require_user(authorization)
 
-    if not durable_jobs.get(job_id, user_id=user["id"]):
+    if not owned_job(
+        job_id,
+        user["id"],
+        durable_store=durable_jobs,
+        memory_store=jobs,
+    ):
         raise HTTPException(status_code=404, detail="Job not found")
 
     try:
@@ -1274,9 +1294,16 @@ def retry_job(
     authorization: Optional[str] = Header(default=None),
 ):
     user = require_user(authorization)
-    original = durable_jobs.get(job_id, user_id=user["id"])
+    original = owned_job(
+        job_id,
+        user["id"],
+        durable_store=durable_jobs,
+        memory_store=jobs,
+    )
     if not original:
-        raise HTTPException(status_code=404, detail="Durable job not found")
+        raise HTTPException(status_code=404, detail="Job not found")
+    if not durable_jobs.configured:
+        raise HTTPException(status_code=409, detail="retry_requires_durable_store")
 
     assessment = job_recovery.assess(original)
     if not assessment["retryable"]:
@@ -1327,14 +1354,27 @@ def retry_job(
 def sign_job_artifact(
     job_id: str,
     artifact_id: str,
-    expires_in: int = 900,
+    expires_in: int = Query(default=900, ge=60, le=3600),
     authorization: Optional[str] = Header(default=None),
 ):
     user = require_user(authorization)
-    if not durable_jobs.get(job_id, user_id=user["id"]):
+    try:
+        normalized_job_id = normalize_uuid(job_id)
+        normalized_artifact_id = normalize_uuid(artifact_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Artifact not found") from exc
+    if not owned_job(
+        normalized_job_id,
+        user["id"],
+        durable_store=durable_jobs,
+        memory_store=jobs,
+    ):
         raise HTTPException(status_code=404, detail="Job not found")
-    artifacts = durable_jobs.artifacts(job_id, user_id=user["id"])
-    artifact = next((a for a in artifacts if a.get("id") == artifact_id), None)
+    artifacts = durable_jobs.artifacts(normalized_job_id, user_id=user["id"])
+    artifact = next(
+        (a for a in artifacts if a.get("id") == normalized_artifact_id),
+        None,
+    )
     if not artifact:
         raise HTTPException(status_code=404, detail="Artifact not found for this job")
 
@@ -1357,20 +1397,17 @@ def sign_job_artifact(
 @app.get("/v1/jobs/{job_id}")
 def get_job(job_id: str, authorization: Optional[str] = Header(default=None)):
     user = require_user(authorization)
-    durable = durable_jobs.get(job_id, user_id=user["id"])
-    if durable:
-        durable["artifacts"] = durable_jobs.artifacts(job_id, user_id=user["id"])
-        return durable
-
-    job = jobs.get(job_id)
-    if not job or job.user_id != user["id"]:
+    resolved = owned_job(
+        job_id,
+        user["id"],
+        durable_store=durable_jobs,
+        memory_store=jobs,
+    )
+    if not resolved:
         raise HTTPException(status_code=404, detail="Job not found")
-    return {
-        "job_id": job.id,
-        "status": job.status,
-        "stage": job.status,
-        "progress": 1.0 if job.status == "complete" else 0.0,
-        "result": job.result,
-        "error": job.error,
-        "artifacts": [],
-    }
+    if durable_jobs.configured:
+        resolved["artifacts"] = durable_jobs.artifacts(
+            resolved["job_id"],
+            user_id=user["id"],
+        )
+    return resolved

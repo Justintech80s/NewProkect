@@ -4,6 +4,12 @@ import os
 from urllib.parse import quote
 from typing import Any, Dict
 
+from ..security import safe_download_name, validate_storage_path
+
+
+MIN_SIGNED_URL_TTL_SECONDS = 60
+MAX_SIGNED_URL_TTL_SECONDS = 3600
+
 
 class SecureArtifactDelivery:
     """Creates short-lived signed URLs for private Supabase Storage artifacts."""
@@ -11,7 +17,11 @@ class SecureArtifactDelivery:
     def __init__(self):
         self.supabase_url = os.getenv("JUST_MAKER_SUPABASE_URL")
         self.service_role_key = os.getenv("JUST_MAKER_SUPABASE_SERVICE_ROLE_KEY")
-        self.default_ttl = int(os.getenv("JUST_MAKER_SIGNED_URL_TTL_SECONDS", "900"))
+        configured_default = int(os.getenv("JUST_MAKER_SIGNED_URL_TTL_SECONDS", "900"))
+        self.default_ttl = max(
+            MIN_SIGNED_URL_TTL_SECONDS,
+            min(configured_default, MAX_SIGNED_URL_TTL_SECONDS),
+        )
 
     @property
     def configured(self) -> bool:
@@ -30,9 +40,16 @@ class SecureArtifactDelivery:
                 "reason": "artifact_delivery_not_configured",
             }
 
+        bucket = validate_storage_path(bucket)
+        object_path = validate_storage_path(object_path)
+        download_name = safe_download_name(download_name)
+
         import httpx
 
-        ttl = max(60, min(int(expires_in or self.default_ttl), 86400))
+        ttl = max(
+            MIN_SIGNED_URL_TTL_SECONDS,
+            min(int(expires_in or self.default_ttl), MAX_SIGNED_URL_TTL_SECONDS),
+        )
         encoded_bucket = quote(bucket, safe="")
         encoded_path = "/".join(quote(part, safe="") for part in object_path.split("/"))
         endpoint = (
@@ -60,7 +77,7 @@ class SecureArtifactDelivery:
 
         signed_path = data.get("signedURL") or data.get("signedUrl") or data.get("signed_url")
         if not signed_path:
-            raise RuntimeError("Supabase did not return a signed URL")
+            raise RuntimeError("signed_url_unavailable")
 
         if signed_path.startswith("http"):
             signed_url = signed_path

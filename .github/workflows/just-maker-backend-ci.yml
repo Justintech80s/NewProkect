@@ -108,11 +108,20 @@ jobs:
   security-contract:
     name: Security contract
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend test dependencies
+        working-directory: just-soundz-backend
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
 
       - name: Fail on committed private secrets
         shell: bash
@@ -128,3 +137,25 @@ jobs:
         run: |
           set -euo pipefail
           grep -R "just-maker-artifacts" just-soundz-backend/schema >/dev/null
+
+      - name: Run Pass 2 security regression tests
+        working-directory: just-soundz-backend
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_security_pass2.py
+
+      - name: Verify Pass 2 security hardening has no placeholders
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            just-soundz-backend/app/security.py
+            just-soundz-backend/app/ownership.py
+            just-soundz-backend/app/services/auth.py
+            just-soundz-backend/app/services/artifact_delivery.py
+          )
+          if git grep -nE 'TODO|TBD|implement later' -- "${files[@]}"; then
+            echo "Pass 2 security files contain unfinished placeholders."
+            exit 1
+          fi
+
