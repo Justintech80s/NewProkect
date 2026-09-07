@@ -6,6 +6,7 @@ from typing import Any, Dict
 from .embeddings import MusicEmbeddingEngine
 from .database import MusicDatabase
 from ..services.reference_audio import ReferenceAudioAnalyzer
+from .intelligence import DatasetIntelligence
 
 
 ALLOWED_AUDIO_EMBEDDING_RIGHTS = {
@@ -25,6 +26,7 @@ class AudioIntelligenceEngine:
         self.embeddings = MusicEmbeddingEngine()
         self.database = MusicDatabase()
         self.analyzer = ReferenceAudioAnalyzer()
+        self.intelligence = DatasetIntelligence()
 
     def index_sample_asset(
         self,
@@ -52,7 +54,10 @@ class AudioIntelligenceEngine:
         if not path.exists():
             raise FileNotFoundError(str(path))
 
-        embedding = self.embeddings.audio_embedding(str(path))
+        embedding = self.intelligence.validate_embedding(
+            self.embeddings.audio_embedding(str(path)),
+            expected_dimension=self.embeddings.dimension,
+        )
         analysis = self.analyzer.analyze(str(path))
         traits = analysis.get("production_traits") or {}
 
@@ -81,7 +86,13 @@ class AudioIntelligenceEngine:
         *,
         limit: int = 20,
     ) -> Dict[str, Any]:
-        embedding = self.embeddings.audio_embedding(audio_path)
+        path = Path(audio_path)
+        if not path.exists() or not path.is_file():
+            raise FileNotFoundError(str(path))
+        embedding = self.intelligence.validate_embedding(
+            self.embeddings.audio_embedding(str(path)),
+            expected_dimension=self.embeddings.dimension,
+        )
         return {
             "query_type": "audio",
             "results": self.database.audio_sample_similarity_search(
