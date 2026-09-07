@@ -128,3 +128,25 @@ jobs:
         run: |
           set -euo pipefail
           grep -R "just-maker-artifacts" just-soundz-backend/schema >/dev/null
+
+      - name: Run Pass 2 security regression tests
+        working-directory: just-soundz-backend
+        env:
+          PYTHONPATH: .
+        run: pytest -q tests/test_security_pass2.py
+
+      - name: Verify Pass 2 security hardening has no placeholders
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            just-soundz-backend/app/security.py
+            just-soundz-backend/app/ownership.py
+            just-soundz-backend/app/services/auth.py
+            just-soundz-backend/app/services/artifact_delivery.py
+          )
+          if git grep -nE 'TODO|TBD|implement later' -- "${files[@]}"; then
+            echo "Pass 2 security files contain unfinished placeholders."
+            exit 1
+          fi
+
