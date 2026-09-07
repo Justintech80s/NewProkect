@@ -8,6 +8,14 @@ from app.main import app
 client = TestClient(app)
 
 
+def test_lifespan_sets_startup_report():
+    with TestClient(app) as lifecycle_client:
+        report = lifecycle_client.app.state.startup_report
+        assert report["valid"] is True
+        assert isinstance(report["fatal"], list)
+        assert isinstance(report["degraded"], list)
+
+
 def test_health_contract():
     response = client.get("/health")
     assert response.status_code == 200
