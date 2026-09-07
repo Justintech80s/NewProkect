@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from functools import lru_cache
 from typing import Any
 
@@ -76,6 +77,19 @@ class AppSettings(BaseSettings):
         ]
 
     @property
+    def configured_ensemble_worker_urls(self) -> list[str]:
+        urls: list[str] = []
+        for spec in self.ensemble_workers:
+            parts = [part.strip() for part in spec.split("|")]
+            if len(parts) != 5:
+                continue
+            _, _, url_env, _, _ = parts
+            value = os.getenv(url_env)
+            if value:
+                urls.append(value)
+        return urls
+
+    @property
     def external_worker_urls(self) -> list[str]:
         direct = [
             value
@@ -86,7 +100,7 @@ class AppSettings(BaseSettings):
             )
             if value
         ]
-        return [*direct, *self.ensemble_workers]
+        return [*direct, *self.configured_ensemble_worker_urls]
 
 
 @lru_cache(maxsize=1)
