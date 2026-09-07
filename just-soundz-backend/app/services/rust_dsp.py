@@ -102,10 +102,12 @@ class RustDSP:
             raise ValueError("invalid_soft_clip_drive")
         if not self.available:
             result = np.tanh(audio * drive) / np.tanh(drive)
+            result = np.clip(result, -1.0, 1.0)
             return self._restore(result, audio.shape)
 
         flat = audio.reshape(-1)
         result = self._module.soft_clip_interleaved(flat.tolist(), drive)
+        result = np.clip(np.asarray(result, dtype=np.float32), -1.0, 1.0)
         return self._restore(result, audio.shape)
 
     def normalize_peak(self, audio: np.ndarray, target_peak_db: float) -> np.ndarray:
