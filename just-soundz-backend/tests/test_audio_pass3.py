@@ -222,7 +222,8 @@ class FakeRustModule:
     @staticmethod
     def soft_clip_interleaved(samples, drive):
         arr = np.asarray(samples, dtype=np.float32)
-        return (np.tanh(arr * drive) / np.tanh(drive)).tolist()
+        result = np.tanh(arr * drive) / np.tanh(drive)
+        return np.clip(result, -1.0, 1.0).tolist()
 
     @staticmethod
     def normalize_peak_interleaved(samples, target_peak_db):
