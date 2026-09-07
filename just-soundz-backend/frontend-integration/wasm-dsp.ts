@@ -1,16 +1,16 @@
 export type JustMakerWasmDsp = {
-  remove_dc_interleaved_wasm(samples: Float32Array, channels: number): Float32Array;
+  remove_dc_interleaved_wasm(samples: Float32Array<ArrayBufferLike>, channels: number): Float32Array<ArrayBufferLike>;
   high_pass_interleaved_wasm(
-    samples: Float32Array,
+    samples: Float32Array<ArrayBufferLike>,
     channels: number,
     sampleRate: number,
     cutoffHz: number,
-  ): Float32Array;
-  soft_clip_interleaved_wasm(samples: Float32Array, drive: number): Float32Array;
-  normalize_peak_interleaved_wasm(samples: Float32Array, targetPeakDb: number): Float32Array;
-  apply_gain_db_interleaved_wasm(samples: Float32Array, gainDb: number): Float32Array;
-  rms_dbfs_wasm(samples: Float32Array): number;
-  peak_dbfs_wasm(samples: Float32Array): number;
+  ): Float32Array<ArrayBufferLike>;
+  soft_clip_interleaved_wasm(samples: Float32Array<ArrayBufferLike>, drive: number): Float32Array<ArrayBufferLike>;
+  normalize_peak_interleaved_wasm(samples: Float32Array<ArrayBufferLike>, targetPeakDb: number): Float32Array<ArrayBufferLike>;
+  apply_gain_db_interleaved_wasm(samples: Float32Array<ArrayBufferLike>, gainDb: number): Float32Array<ArrayBufferLike>;
+  rms_dbfs_wasm(samples: Float32Array<ArrayBufferLike>): number;
+  peak_dbfs_wasm(samples: Float32Array<ArrayBufferLike>): number;
 };
 
 export type WasmModuleLoader = () => Promise<unknown>;
