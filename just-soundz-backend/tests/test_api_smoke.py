@@ -1,9 +1,19 @@
+import uuid
+
 from fastapi.testclient import TestClient
 
 from app.main import app
 
 
 client = TestClient(app)
+
+
+def test_lifespan_sets_startup_report():
+    with TestClient(app) as lifecycle_client:
+        report = lifecycle_client.app.state.startup_report
+        assert report["valid"] is True
+        assert isinstance(report["fatal"], list)
+        assert isinstance(report["degraded"], list)
 
 
 def test_health_contract():
@@ -13,6 +23,17 @@ def test_health_contract():
     assert payload["ok"] is True
     assert payload["service"] == "just-maker-ai-backend"
     assert payload["version"]
+
+
+def test_request_id_is_generated_and_echoed():
+    response = client.get("/health")
+    request_id = response.headers["X-Request-ID"]
+    uuid.UUID(request_id)
+
+
+def test_valid_request_id_is_preserved():
+    response = client.get("/health", headers={"X-Request-ID": "site-req-123"})
+    assert response.headers["X-Request-ID"] == "site-req-123"
 
 
 def test_root_exposes_core_pipeline():
@@ -31,7 +52,7 @@ def test_root_exposes_core_pipeline():
         assert stage in pipeline
 
 
-def test_authenticated_job_endpoint_rejects_missing_token():
+def test_authenticated_job_endpoint_rejects_missing_token_with_safe_error():
     response = client.post(
         "/v1/jobs",
         json={
@@ -40,3 +61,6 @@ def test_authenticated_job_endpoint_rejects_missing_token():
         },
     )
     assert response.status_code in {401, 503}
+    error = response.json()["error"]
+    assert error["request_id"]
+    assert isinstance(error["retryable"], bool)

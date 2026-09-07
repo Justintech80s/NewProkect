@@ -6,9 +6,11 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
+from .job_states import normalize_progress, validate_transition
+
 
 class DurableGenerationJobStore:
-    """Postgres-backed generation job store with in-process fallback compatibility."""
+    """Postgres-backed generation job store with no-op fallback compatibility."""
 
     def __init__(self):
         self.url = os.getenv("JUST_MAKER_DATABASE_URL")
@@ -25,6 +27,7 @@ class DurableGenerationJobStore:
         retry_count: int = 0,
         max_retries: int = 3,
         user_id: str | None = None,
+        request_id: str | None = None,
     ) -> Dict[str, Any]:
         job_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
@@ -37,6 +40,7 @@ class DurableGenerationJobStore:
             "result": None,
             "error": None,
             "user_id": user_id,
+            "request_id": request_id,
             "retry_of": retry_of,
             "retry_count": retry_count,
             "max_retries": max_retries,
@@ -57,18 +61,32 @@ class DurableGenerationJobStore:
         progress: Optional[float] = None,
         result: Optional[Dict[str, Any]] = None,
         error: Optional[str] = None,
+        request_id: Optional[str] = None,
     ) -> Dict[str, Any]:
-        current = self.get(job_id) or {"job_id": job_id, "request": {}}
+        current = self.get(job_id) if self.configured else None
+        current = current or {"job_id": job_id, "request": {}, "status": "queued", "progress": 0.0}
+
         if status is not None:
+            if self.configured:
+                validate_transition(str(current.get("status") or "queued"), status)
+            else:
+                validate_transition(status, status)
             current["status"] = status
+
+        effective_status = str(current.get("status") or "queued")
         if stage is not None:
             current["stage"] = stage
-        if progress is not None:
-            current["progress"] = max(0.0, min(1.0, float(progress)))
+        if progress is not None or effective_status == "complete":
+            normalized = normalize_progress(effective_status, progress)
+            if normalized is not None:
+                current["progress"] = normalized
         if result is not None:
             current["result"] = result
         if error is not None:
             current["error"] = error
+        if request_id is not None:
+            current["request_id"] = request_id
+
         now = datetime.now(timezone.utc).isoformat()
         current["updated_at"] = now
         current["heartbeat_at"] = now
@@ -100,13 +118,18 @@ class DurableGenerationJobStore:
         if not row:
             return None
 
+        result_payload = row[5]
+        request_id = None
+        if isinstance(result_payload, dict):
+            request_id = (result_payload.get("operations") or {}).get("request_id")
+
         return {
             "job_id": row[0],
             "status": row[1],
             "stage": row[2],
             "progress": float(row[3]),
             "request": row[4] or {},
-            "result": row[5],
+            "result": result_payload,
             "error": row[6],
             "created_at": row[7].isoformat() if row[7] else None,
             "updated_at": row[8].isoformat() if row[8] else None,
@@ -115,6 +138,7 @@ class DurableGenerationJobStore:
             "retry_of": row[11],
             "heartbeat_at": row[12].isoformat() if row[12] else None,
             "user_id": row[13],
+            "request_id": request_id,
         }
 
     def save_artifact(self, artifact: Dict[str, Any]) -> None:
@@ -198,6 +222,14 @@ class DurableGenerationJobStore:
     def _upsert(self, job: Dict[str, Any]) -> None:
         import psycopg
 
+        result_payload = job.get("result")
+        request_id = job.get("request_id")
+        if request_id and isinstance(result_payload, dict):
+            result_payload = dict(result_payload)
+            operations = dict(result_payload.get("operations") or {})
+            operations.setdefault("request_id", request_id)
+            result_payload["operations"] = operations
+
         with psycopg.connect(self.url) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -233,7 +265,7 @@ class DurableGenerationJobStore:
                         job.get("stage", "queued"),
                         float(job.get("progress", 0.0)),
                         json.dumps(job.get("request", {})),
-                        json.dumps(job.get("result")),
+                        json.dumps(result_payload),
                         job.get("error"),
                         int(job.get("retry_count", 0)),
                         int(job.get("max_retries", 3)),

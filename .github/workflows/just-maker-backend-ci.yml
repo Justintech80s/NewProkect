@@ -54,6 +54,28 @@ jobs:
           PYTHONPATH: .
         run: pytest -q tests/test_api_smoke.py
 
+      - name: Verify core hardening contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            app/settings.py
+            app/errors.py
+            app/request_context.py
+            app/services/job_states.py
+          )
+          if git grep -nE 'TODO|TBD|implement later' -- "${files[@]}"; then
+            echo "Core hardening files contain unfinished placeholders."
+            exit 1
+          fi
+          for symbol in AppSettings AppError JobStateError; do
+            count=$(git grep -nE "class ${symbol}(\\(|:)" -- app | wc -l)
+            test "$count" -eq 1 || {
+              echo "Expected exactly one definition of ${symbol}; found ${count}."
+              exit 1
+            }
+          done
+
   gpu-contract:
     name: GPU worker contract
     runs-on: ubuntu-latest
