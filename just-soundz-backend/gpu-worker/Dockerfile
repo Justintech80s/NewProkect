@@ -4,12 +4,16 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
 
-RUN apt-get update && apt-get install -y --no-install-recommends     python3 python3-pip libsndfile1 ca-certificates     && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip libsndfile1 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY requirements.txt /app/requirements.txt
-RUN python3 -m pip install --upgrade pip &&     python3 -m pip install -r /app/requirements.txt
+COPY requirements-gpu.txt /app/requirements-gpu.txt
+RUN python3 -m pip install --upgrade pip && \
+    python3 -m pip install -r /app/requirements-gpu.txt
 
 COPY . /app
 
