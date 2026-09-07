@@ -144,3 +144,47 @@ fn just_maker_dsp(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(peak_dbfs, m)?)?;
     Ok(())
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_peak_is_bounded() {
+        let input = vec![0.25_f32, -0.5, 0.75, -1.0];
+        let out = normalize_peak_interleaved(input, -1.0).unwrap();
+        let peak = out
+            .iter()
+            .fold(0.0_f32, |acc, value| acc.max(value.abs()));
+        let target = db_to_gain(-1.0);
+        assert!((peak - target).abs() < 1e-5);
+        assert!(out.iter().all(|value| value.is_finite()));
+    }
+
+    #[test]
+    fn remove_dc_reduces_channel_mean() {
+        let input = vec![0.6_f32, 0.2, 0.4, 0.0, 0.8, 0.4];
+        let out = remove_dc_interleaved(input, 2).unwrap();
+        let left = [out[0], out[2], out[4]];
+        let right = [out[1], out[3], out[5]];
+        let left_mean = left.iter().sum::<f32>() / left.len() as f32;
+        let right_mean = right.iter().sum::<f32>() / right.len() as f32;
+        assert!(left_mean.abs() < 1e-6);
+        assert!(right_mean.abs() < 1e-6);
+    }
+
+    #[test]
+    fn soft_clip_stays_finite_and_bounded() {
+        let input = vec![-4.0_f32, -1.0, 0.0, 1.0, 4.0];
+        let out = soft_clip_interleaved(input, 1.22).unwrap();
+        assert!(out.iter().all(|value| value.is_finite()));
+        assert!(out.iter().all(|value| value.abs() <= 1.0 + 1e-6));
+    }
+
+    #[test]
+    fn invalid_filter_parameters_are_rejected() {
+        let result = high_pass_interleaved(vec![0.0, 1.0], 0, 44_100.0, 25.0);
+        assert!(result.is_err());
+    }
+}
