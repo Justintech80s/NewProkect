@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .request_context import normalize_request_id
 
@@ -58,7 +59,7 @@ def _http_code(status_code: int) -> str:
     }.get(status_code, "http_error")
 
 
-def _safe_http_message(exc: HTTPException) -> str:
+def _safe_http_message(exc: StarletteHTTPException) -> str:
     if exc.status_code >= 500:
         return "The service is temporarily unavailable."
     if isinstance(exc.detail, str):
@@ -93,8 +94,8 @@ def register_error_handlers(app: FastAPI) -> None:
             ),
         )
 
-    @app.exception_handler(HTTPException)
-    async def handle_http_error(request: Request, exc: HTTPException):
+    @app.exception_handler(StarletteHTTPException)
+    async def handle_http_error(request: Request, exc: StarletteHTTPException):
         return JSONResponse(
             status_code=exc.status_code,
             content=error_payload(
