@@ -3,10 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test composition-client.test.js && npm run typecheck",
+    "test": "node --test composition-client.test.js && tsx --test local-sequencer.test.ts && npm run typecheck",
     "typecheck": "tsc -p tsconfig.json"
   },
   "devDependencies": {
+    "tsx": "^4.20.5",
     "typescript": "^5.9.2"
   }
 }
