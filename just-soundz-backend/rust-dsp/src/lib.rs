@@ -79,7 +79,7 @@ fn soft_clip_interleaved(samples: Vec<f32>, drive: f32) -> PyResult<Vec<f32>> {
     let denom = drive.tanh();
     Ok(samples
         .into_iter()
-        .map(|sample| (sample * drive).tanh() / denom)
+        .map(|sample| ((sample * drive).tanh() / denom).clamp(-1.0, 1.0))
         .collect())
 }
 
