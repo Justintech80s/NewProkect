@@ -39,59 +39,102 @@ class RustDSP:
             "load_error": self._load_error,
         }
 
+    def _prepare(self, audio: np.ndarray) -> np.ndarray:
+        prepared = np.asarray(audio, dtype=np.float32)
+        if prepared.ndim not in {1, 2}:
+            raise ValueError("unsupported_audio_rank")
+        if not np.isfinite(prepared).all():
+            raise ValueError("non_finite_audio")
+        return prepared
+
+    def _restore(self, result, shape) -> np.ndarray:
+        restored = np.asarray(result, dtype=np.float32).reshape(shape)
+        if not np.isfinite(restored).all():
+            raise ValueError("non_finite_dsp_output")
+        return restored
+
     def remove_dc(self, audio: np.ndarray) -> np.ndarray:
+        audio = self._prepare(audio)
         if not self.available:
-            return audio - np.mean(audio, axis=0, keepdims=True)
+            return self._restore(
+                audio - np.mean(audio, axis=0, keepdims=True),
+                audio.shape,
+            )
 
         channels = audio.shape[1] if audio.ndim == 2 else 1
-        flat = np.asarray(audio, dtype=np.float32).reshape(-1)
+        flat = audio.reshape(-1)
         result = self._module.remove_dc_interleaved(flat.tolist(), channels)
-        return np.asarray(result, dtype=np.float32).reshape(audio.shape)
+        return self._restore(result, audio.shape)
 
     def high_pass(self, audio: np.ndarray, sr: int, cutoff_hz: float) -> np.ndarray:
+        audio = self._prepare(audio)
+        if sr <= 0 or cutoff_hz <= 0:
+            raise ValueError("invalid_filter_parameters")
         if not self.available:
-            return self._numpy_high_pass(audio, sr, cutoff_hz)
+            return self._restore(self._numpy_high_pass(audio, sr, cutoff_hz), audio.shape)
 
         channels = audio.shape[1] if audio.ndim == 2 else 1
-        flat = np.asarray(audio, dtype=np.float32).reshape(-1)
+        flat = audio.reshape(-1)
         result = self._module.high_pass_interleaved(
             flat.tolist(),
             channels,
             float(sr),
             float(cutoff_hz),
         )
-        return np.asarray(result, dtype=np.float32).reshape(audio.shape)
+        return self._restore(result, audio.shape)
 
     def apply_gain_db(self, audio: np.ndarray, gain_db: float) -> np.ndarray:
+        audio = self._prepare(audio)
+        if not np.isfinite(float(gain_db)):
+            raise ValueError("invalid_gain")
         if not self.available:
-            return audio * (10.0 ** (float(gain_db) / 20.0))
+            result = audio * (10.0 ** (float(gain_db) / 20.0))
+            return self._restore(result, audio.shape)
 
-        flat = np.asarray(audio, dtype=np.float32).reshape(-1)
+        flat = audio.reshape(-1)
         result = self._module.apply_gain_db_interleaved(flat.tolist(), float(gain_db))
-        return np.asarray(result, dtype=np.float32).reshape(audio.shape)
+        return self._restore(result, audio.shape)
 
     def soft_clip(self, audio: np.ndarray, drive: float = 1.22) -> np.ndarray:
+        audio = self._prepare(audio)
+        drive = float(drive)
+        if not np.isfinite(drive) or drive <= 0:
+            raise ValueError("invalid_soft_clip_drive")
         if not self.available:
-            return np.tanh(audio * drive) / np.tanh(drive)
+            result = np.tanh(audio * drive) / np.tanh(drive)
+            result = np.clip(result, -1.0, 1.0)
+            return self._restore(result, audio.shape)
 
-        flat = np.asarray(audio, dtype=np.float32).reshape(-1)
-        result = self._module.soft_clip_interleaved(flat.tolist(), float(drive))
-        return np.asarray(result, dtype=np.float32).reshape(audio.shape)
+        flat = audio.reshape(-1)
+        result = self._module.soft_clip_interleaved(flat.tolist(), drive)
+        result = np.clip(np.asarray(result, dtype=np.float32), -1.0, 1.0)
+        return self._restore(result, audio.shape)
 
     def normalize_peak(self, audio: np.ndarray, target_peak_db: float) -> np.ndarray:
+        audio = self._prepare(audio)
+        target_peak_db = float(target_peak_db)
+        if not np.isfinite(target_peak_db) or target_peak_db > 0.0 or target_peak_db < -60.0:
+            raise ValueError("invalid_target_peak")
+        if not audio.size:
+            return audio.copy()
         if not self.available:
-            target = 10.0 ** (float(target_peak_db) / 20.0)
-            peak = float(np.max(np.abs(audio)) or 1.0)
-            return audio / peak * target
+            target = 10.0 ** (target_peak_db / 20.0)
+            peak = float(np.max(np.abs(audio)))
+            if peak <= 1e-12:
+                return np.zeros_like(audio)
+            return self._restore(audio / peak * target, audio.shape)
 
-        flat = np.asarray(audio, dtype=np.float32).reshape(-1)
+        flat = audio.reshape(-1)
         result = self._module.normalize_peak_interleaved(
             flat.tolist(),
-            float(target_peak_db),
+            target_peak_db,
         )
-        return np.asarray(result, dtype=np.float32).reshape(audio.shape)
+        return self._restore(result, audio.shape)
 
     def rms_dbfs(self, audio: np.ndarray) -> float:
+        audio = self._prepare(audio)
+        if not audio.size:
+            return -120.0
         if not self.available:
             rms = float(np.sqrt(np.mean(audio * audio) + 1e-12))
             return float(20.0 * np.log10(rms + 1e-12))
@@ -100,6 +143,9 @@ class RustDSP:
         return float(self._module.rms_dbfs(flat.tolist()))
 
     def peak_dbfs(self, audio: np.ndarray) -> float:
+        audio = self._prepare(audio)
+        if not audio.size:
+            return -120.0
         if not self.available:
             peak = float(np.max(np.abs(audio)) + 1e-12)
             return float(20.0 * np.log10(peak + 1e-12))

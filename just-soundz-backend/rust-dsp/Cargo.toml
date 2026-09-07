@@ -7,5 +7,9 @@ edition = "2021"
 name = "just_maker_dsp"
 crate-type = ["cdylib"]
 
+[features]
+default = ["python-extension"]
+python-extension = ["pyo3/extension-module"]
+
 [dependencies]
-pyo3 = { version = "0.22", features = ["extension-module"] }
+pyo3 = { version = "0.22" }
