@@ -27,3 +27,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Check Rust DSP crate
         run: cargo check --locked || cargo check
+
+      - name: Run Rust DSP tests
+        run: cargo test --locked || cargo test
