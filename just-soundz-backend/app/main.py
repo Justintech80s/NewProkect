@@ -386,7 +386,7 @@ def run_generation(req: GenerateRequest, user_id: str | None = None, _single_can
         mastering_result = mastering.process(generation["audio_path"])
         mastering_review = mastering_critic.evaluate(mastering_result)
 
-        if not mastering_review.get("pass"):
+        if mastering_critic.should_correct(mastering_review, mastering_corrections):
             mastering_corrections += 1
             target_peak = mastering_critic.corrective_target_peak(mastering_review)
             mastering_result = mastering.process(
@@ -451,7 +451,7 @@ def run_generation(req: GenerateRequest, user_id: str | None = None, _single_can
             )
             mastering_result = mastering.process(generation["audio_path"])
             mastering_review = mastering_critic.evaluate(mastering_result)
-            if not mastering_review.get("pass"):
+            if mastering_critic.should_correct(mastering_review, mastering_corrections):
                 mastering_corrections += 1
                 target_peak = mastering_critic.corrective_target_peak(mastering_review)
                 mastering_result = mastering.process(
