@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import os
 import time
 from pathlib import Path
@@ -12,8 +13,8 @@ from prompt_compiler import ConditioningPromptCompiler
 class GPUWorker:
     """GPU-backed music generation service.
 
-    The model is selected entirely by environment configuration so production
-    can use only model weights whose license is appropriate for the deployment.
+    The Vercel deployment is intentionally a lightweight control-plane shell.
+    Full torch/transformers dependencies belong in the CUDA container deployment.
     """
 
     def __init__(self):
@@ -34,12 +35,28 @@ class GPUWorker:
             self.cache = None
             self.cache_tuner = None
 
+    def _runtime_available(self) -> bool:
+        if self.backend != "transformers-musicgen":
+            return False
+        return bool(
+            importlib.util.find_spec("torch")
+            and importlib.util.find_spec("transformers")
+        )
+
     def status(self) -> Dict[str, Any]:
+        runtime_available = self._runtime_available()
         return {
             "backend": self.backend,
             "model_id": self.model_id or None,
             "device": self.device,
-            "configured": bool(self.model_id),
+            "configured": bool(self.model_id) and runtime_available,
+            "model_configured": bool(self.model_id),
+            "runtime_available": runtime_available,
+            "deployment_role": (
+                "gpu-runtime"
+                if runtime_available
+                else "lightweight-control-plane"
+            ),
             "loaded": self._adapter is not None,
             "max_seconds": self.max_seconds,
             "cache": self.cache.status() if self.cache else {
@@ -62,6 +79,7 @@ class GPUWorker:
             "negative_prompt": True,
             "max_duration_seconds": self.max_seconds,
             "conditioning_mode": "compiled-text-plus-generation-controls-and-stem-target",
+            "runtime_available": self._runtime_available(),
         }
 
     def generate(
@@ -72,6 +90,11 @@ class GPUWorker:
     ) -> Dict[str, Any]:
         if not self.model_id:
             raise RuntimeError("JUST_MAKER_GPU_MODEL_ID is not configured")
+        if not self._runtime_available():
+            raise RuntimeError(
+                "GPU model runtime is not installed in this deployment; "
+                "deploy requirements-gpu.txt on a CUDA-capable host"
+            )
 
         duration = min(
             int(plan.get("duration_seconds") or 120),
@@ -155,6 +178,10 @@ class GPUWorker:
             return self._adapter
 
         if self.backend == "transformers-musicgen":
+            if not self._runtime_available():
+                raise RuntimeError(
+                    "transformers-musicgen runtime unavailable in this deployment"
+                )
             from adapters.musicgen_transformers import TransformersMusicGenAdapter
             self._adapter = TransformersMusicGenAdapter(
                 model_id=self.model_id,
