@@ -660,6 +660,9 @@ def process_job(
                     "provider": generation.get("provider"),
                     "bpm": (result.get("plan") or {}).get("bpm"),
                     "key": (result.get("plan") or {}).get("key"),
+                    "technical_metadata": (result.get("mastering") or {}).get(
+                        "technical_metadata"
+                    ),
                 },
             )
             persisted = artifact_store.persist({
@@ -684,6 +687,7 @@ def process_job(
                         "stem": stem_name,
                         "bpm": (result.get("plan") or {}).get("bpm"),
                         "key": (result.get("plan") or {}).get("key"),
+                        "technical_metadata": stem.get("technical_metadata"),
                     },
                 )
                 stem_persisted = artifact_store.persist({
