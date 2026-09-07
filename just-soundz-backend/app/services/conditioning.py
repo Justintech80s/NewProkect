@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 
 class ConditioningCompiler:
-    """Compiles the rich Just Maker plan into a compact provider-neutral model payload."""
+    """Compiles the rich Just Maker plan into a provider-neutral model payload."""
 
     def compile(self, plan: Dict[str, Any]) -> Dict[str, Any]:
         dna = plan.get("producer_dna") or {}
@@ -19,6 +19,9 @@ class ConditioningCompiler:
                 "prompt": plan.get("original_prompt"),
                 "negative": plan.get("negative_instructions") or [],
             },
+            "style_intent": plan.get("style_intent") or {},
+            "performance": plan.get("performance") or {},
+            "sampling_intent": plan.get("sampling") or {},
             "musical": {
                 "bpm": plan.get("bpm"),
                 "key": plan.get("key"),
@@ -53,6 +56,7 @@ class ConditioningCompiler:
                 "policy": (plan.get("reference_audio") or {}).get("policy") or {},
                 "originality_guard": plan.get("originality_guard") or {},
             },
+            "novelty": plan.get("novelty") or {},
         }
 
     def apply(self, plan: Dict[str, Any]) -> Dict[str, Any]:
