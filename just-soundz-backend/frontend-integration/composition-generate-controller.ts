@@ -1,5 +1,6 @@
 import type { LocalInstrumentalRenderInput, LocalInstrumentalRenderResult } from "./local-instrumental-renderer.js";
 import { JustMakerLocalInstrumentalRenderer } from "./local-instrumental-renderer.js";
+import { createProceduralLocalSampleKit } from "./local-procedural-kit.js";
 import type { LocalSampleKit } from "./web-audio-sequencer-renderer.js";
 import type { WasmModuleLoader } from "./wasm-dsp.js";
 
@@ -57,7 +58,7 @@ type CompositionClientLike = {
 export type JustMakerGenerateControllerOptions = {
   client: CompositionClientLike;
   wasmLoader: WasmModuleLoader;
-  getLocalAssets: () => Promise<LocalAssets>;
+  getLocalAssets?: () => Promise<LocalAssets>;
   createObjectURL?: (blob: Blob) => string;
   revokeObjectURL?: (url: string) => void;
 };
@@ -73,14 +74,11 @@ export class JustMakerGenerateController {
   constructor({
     client,
     wasmLoader,
-    getLocalAssets,
+    getLocalAssets = async () => ({ kit: createProceduralLocalSampleKit() }),
     createObjectURL = (blob) => URL.createObjectURL(blob),
     revokeObjectURL = (url) => URL.revokeObjectURL(url),
   }: JustMakerGenerateControllerOptions) {
     if (!client) throw new Error("Composition client is required");
-    if (typeof getLocalAssets !== "function") {
-      throw new Error("getLocalAssets must be a function");
-    }
     this.client = client;
     this.getLocalAssets = getLocalAssets;
     this.renderer = new JustMakerLocalInstrumentalRenderer({ wasmLoader });
