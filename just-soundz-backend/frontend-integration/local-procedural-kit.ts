@@ -81,7 +81,10 @@ function toAudioBuffer(samples: Float32Array, sampleRate: number): AudioBuffer {
     numberOfChannels: 1,
     sampleRate,
   });
-  buffer.copyToChannel(samples, 0);
+  const target = buffer.getChannelData(0);
+  for (let i = 0; i < samples.length; i += 1) {
+    target[i] = samples[i];
+  }
   return buffer;
 }
 
