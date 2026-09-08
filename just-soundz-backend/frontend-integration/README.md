@@ -150,3 +150,47 @@ The pipeline:
 - exports a standard 16-bit PCM WAV file entirely on the user's device.
 
 No GPU is required for this path. The model/GPU route remains available as a future higher-end option, but the free engine can render a complete instrumental without sending the audio-generation workload to a paid GPU server.
+
+
+## Free Engine Step 6: automatic Composition fallback
+
+The Composition client now exposes `generateWithFallback()`.
+
+Normal behavior:
+1. try the authenticated Just Maker backend first;
+2. keep the remote result when a worker succeeds;
+3. when the remote generation infrastructure is unavailable, rate-limited, requires unavailable paid GPU credit, or returns a supported server-side availability failure, automatically switch to the local browser engine;
+4. do not hide authentication or bad-input errors behind fallback.
+
+`JustMakerGenerateController` wraps that behavior for the Generate button. It creates a local playback Blob URL that works with the existing audio player contract and can bind directly to an existing HTML button without changing the page design.
+
+The local path is self-contained: if the site does not provide a drum sample kit, it synthesizes a deterministic kick, snare, hi-hat, and ghost-snare kit in the browser. Optional sample chopping still only runs when the user provides audio and confirms that the source is user-owned, cleared, or licensed.
+
+Example integration:
+
+```ts
+const controller = new JustMakerGenerateController({
+  client,
+  wasmLoader: () => import("./pkg/just_maker_dsp.js"),
+});
+
+bindJustMakerGenerateButton({
+  button: document.querySelector("#generate"),
+  readInput: () => ({
+    prompt: promptInput.value,
+    genre: genreSelect.value,
+    mood: moodSelect.value,
+    bpm: bpmInput.value,
+  }),
+  controller,
+  callbacks: {
+    onProgress: updateProgress,
+    onFallback: () => showStatus("Using Free Engine"),
+    onComplete: ({ playback }) => {
+      audioElement.src = playback.url;
+    },
+  },
+});
+```
+
+The repository-side integration is complete, but the currently hosted `chatgpt.site` UI source is not stored in this repository. The final live-site attachment requires the hosted site's frontend source or deployment environment to import this controller.
