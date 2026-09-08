@@ -135,3 +135,18 @@ Capabilities:
 - Web Audio scheduling with local playback-rate pitch shifting.
 
 The local chopper requires an explicit rights attestation before a plan can be built. It is intended for audio the user owns, has cleared, or is licensed to use.
+
+
+## Free Engine Step 5: complete local instrumental rendering
+
+The free browser path can now combine the existing local drum sequencer, bass generator, optional transient-based sample chops, arrangement, and Rust/WASM DSP into one offline render.
+
+The pipeline:
+- builds a complete section-aware beat plan;
+- schedules drums and synthesized bass through Offline Web Audio;
+- optionally schedules user-owned/cleared/licensed sample chops;
+- mixes through a bounded dynamics stage;
+- applies the shared Rust/WASM mastering chain locally;
+- exports a standard 16-bit PCM WAV file entirely on the user's device.
+
+No GPU is required for this path. The model/GPU route remains available as a future higher-end option, but the free engine can render a complete instrumental without sending the audio-generation workload to a paid GPU server.
