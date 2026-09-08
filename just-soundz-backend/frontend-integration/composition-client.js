@@ -94,6 +94,92 @@ export class JustMakerCompositionClient {
     }
   }
 
+  async generateWithFallback(input, options = {}) {
+    const {
+      localGenerate,
+      callbacks = {},
+      preferLocal = false,
+    } = options;
+
+    if (preferLocal) {
+      if (typeof localGenerate !== "function") {
+        throw new Error("Local generation is not configured");
+      }
+      callbacks.onFallback?.({
+        reason: "local-preferred",
+        error: null,
+      });
+      const local = await localGenerate(input, callbacks);
+      const result = {
+        jobId: null,
+        job: null,
+        playback: local?.playback || null,
+        local,
+        source: "local-free-engine",
+      };
+      callbacks.onComplete?.(result);
+      return result;
+    }
+
+    try {
+      const remote = await this.generateAndWait(input, callbacks);
+      return {
+        ...remote,
+        source: "remote-backend",
+      };
+    } catch (error) {
+      if (typeof localGenerate !== "function" || !this.shouldFallbackToLocal(error)) {
+        throw error;
+      }
+
+      callbacks.onFallback?.({
+        reason: "remote-unavailable",
+        error,
+      });
+
+      const local = await localGenerate(input, callbacks);
+      const result = {
+        jobId: null,
+        job: null,
+        playback: local?.playback || null,
+        local,
+        source: "local-free-engine",
+        fallbackFrom: {
+          status: error?.status ?? null,
+          message: error?.message || "Remote generation unavailable",
+        },
+      };
+      callbacks.onComplete?.(result);
+      return result;
+    }
+  }
+
+  shouldFallbackToLocal(error) {
+    const status = Number(error?.status || 0);
+    if ([402, 408, 425, 429, 500, 502, 503, 504].includes(status)) {
+      return true;
+    }
+
+    if (!status && error instanceof TypeError) {
+      return true;
+    }
+
+    const message = String(error?.message || "").toLowerCase();
+    return [
+      "no configured generation worker",
+      "no configured worker",
+      "generation worker produced audio",
+      "provider_unavailable",
+      "health_check_failed",
+      "gpu runtime",
+      "replicate",
+      "purchase credit",
+      "service unavailable",
+      "network error",
+      "failed to fetch",
+    ].some((fragment) => message.includes(fragment));
+  }
+
   normalizeInput(input = {}) {
     const promptParts = [input.prompt, input.genre, input.mood]
       .map((value) => String(value || "").trim())
